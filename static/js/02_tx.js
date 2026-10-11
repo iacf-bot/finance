@@ -55,13 +55,16 @@ function txDesc(t) {
   const demo = isDemoName(t.account_name) || /^\[DEMO\]/.test(t.note || '') ? '<span class="pill demo">DEMO</span> ' : '';
   return `<div>${demo}<b>${main}</b> ${tags}</div><div class="small muted">${t.kind !== 'transfer' ? esc(t.account_name || '— no account —') + ' · ' : ''}${bits.join(' · ')}${t.note ? ' · ' + esc(t.note.slice(0, 80)) : ''}${t.attachment ? ' · 📎' : ''}</div>`;
 }
-function txTable(rows, {compact = false, select = false} = {}) {
-  if (!rows.length) return '<div class="empty">No transactions</div>';
-  return `<div class="scroll-x"><table class="t resp"><thead><tr>${select ? '<th><input type="checkbox" id="selAll"></th>' : ''}<th>Date</th><th>Type</th><th>Details</th>${compact ? '' : '<th>Source</th>'}<th class="right">Amount</th></tr></thead><tbody>
-  ${rows.map(t => `<tr data-tx="${t.id}" style="cursor:pointer">${select ? `<td class="hide-m" onclick="event.stopPropagation()"><input type="checkbox" class="sel" value="${t.id}"></td>` : ''}
-   <td class="nowrap small hide-m">${esc(t.date.slice(0, compact ? 10 : 16))}</td><td class="hide-m"><span class="pill ${t.kind}">${kindLabel[t.kind] || t.kind}</span>${t.status === 'review' ? ' <span class="pill review">review</span>' : ''}</td>
-   <td>${t.reconciled_id ? '<span class="rec-badge" title="Reconciled 已对账 (on or before a reconciliation checkpoint)">✔🔒</span> ' : ''}${txDesc(t)}<div class="small muted" style="display:none" data-m>${esc(t.date.slice(0, 16))}</div></td>${compact ? '' : `<td class="small muted hide-m">${esc(srcLabel[t.source] || t.source)}</td>`}<td class="tx-amt">${txAmount(t)}</td></tr>`).join('')}
+function txTable(rows, {compact = false, select = false, tbodyId = ''} = {}) {
+  if (!rows.length && !tbodyId) return '<div class="empty">No transactions</div>';
+  return `<div class="scroll-x"><table class="t resp"><thead><tr>${select ? '<th><input type="checkbox" id="selAll"></th>' : ''}<th>Date</th><th>Type</th><th>Details</th>${compact ? '' : '<th>Source</th>'}<th class="right">Amount</th></tr></thead><tbody${tbodyId ? ` id="${tbodyId}"` : ''}>
+  ${txRowsHtml(rows, {compact, select})}
   </tbody></table></div>`;
+}
+function txRowsHtml(rows, {compact = false, select = false} = {}) {
+  return `${rows.map(t => `<tr data-tx="${t.id}" style="cursor:pointer">${select ? `<td class="hide-m" onclick="event.stopPropagation()"><input type="checkbox" class="sel" value="${t.id}"></td>` : ''}
+   <td class="nowrap small hide-m">${esc(t.date.slice(0, compact ? 10 : 16))}</td><td class="hide-m"><span class="pill ${t.kind}">${kindLabel[t.kind] || t.kind}</span>${t.status === 'review' ? ' <span class="pill review">review</span>' : ''}</td>
+   <td>${t.reconciled_id ? '<span class="rec-badge" title="Reconciled 已对账 (on or before a reconciliation checkpoint)">✔🔒</span> ' : ''}${txDesc(t)}<div class="small muted" style="display:none" data-m>${esc(t.date.slice(0, 16))}</div></td>${compact ? '' : `<td class="small muted hide-m">${esc(srcLabel[t.source] || t.source)}</td>`}<td class="tx-amt">${txAmount(t)}</td></tr>`).join('')}`;
 }
 function bindTxRows(root, after) { $$('tr[data-tx]', root).forEach(tr => tr.onclick = () => openTx(+tr.dataset.tx, after)); }
 
@@ -86,23 +89,35 @@ VIEWS.transactions = async (v, rest) => {
   <div class="card" style="margin-top:14px"><h3><span id="txCount"></span><span class="sp"></span>
     <button class="btn sm danger" id="bulkDel" disabled>Delete selected</button>
     <a class="btn sm" id="expCsv">⬇ Export CSV</a><a class="btn sm" href="#/settings/import">⬆ Import</a><button class="btn sm pri" onclick="openTx()">+ New</button></h3><div id="txList"></div>
-    <div class="row" style="justify-content:center;margin-top:10px"><button class="btn" id="more" style="display:none">Load more</button></div></div>`;
-  const load = async (append = false) => {
-    const q = new URLSearchParams(Object.entries({...f, ledger_id: S.ledger || ''}).filter(([, x]) => x !== '' && x != null));
-    $('#expCsv').href = '/api/transactions/export.csv?' + q.toString().replace(/limit=\d+&?/, '');
-    const r = await api('/api/transactions?' + q);
-    S.txRows = append ? S.txRows.concat(r.items) : r.items;
-    $('#txCount').textContent = `${r.total} transactions 笔`;
-    $('#txList').innerHTML = txTable(S.txRows, {select: true});
-    $('#more').style.display = S.txRows.length < r.total ? '' : 'none';
-    bindTxRows($('#txList'), () => load());
+    </div>`;
+  const load = async () => {
+    const base = Object.entries({...f, ledger_id: S.ledger || ''}).filter(([k, x]) => x !== '' && x != null && !['limit', 'offset', 'before'].includes(k));
+    const qs = new URLSearchParams(base);
+    $('#expCsv').href = '/api/transactions/export.csv?' + qs.toString();
+    S.txRows = [];
+    const old = $('#txList').nextElementSibling; if (old && old.classList.contains('inf-foot')) old.remove();
+    (S.observers || []).forEach(o => o.disconnect()); S.observers = [];
+    $('#txList').innerHTML = txTable([], {select: true, tbodyId: 'txBody'});
+    $('#txCount').textContent = 'Loading… 加载中';
     const upd = () => { $('#bulkDel').disabled = !$$('.sel:checked').length; };
-    $$('.sel').forEach(c => c.onchange = upd);
-    const sa = $('#selAll'); if (sa) sa.onchange = () => { $$('.sel').forEach(c => c.checked = sa.checked); upd(); };
+    infiniteList($('#txList'), {
+      load: cursor => api('/api/transactions?' + new URLSearchParams([...base, ['limit', '50'], ...(cursor ? [['before', cursor]] : [])])),
+      append: (r, first) => {
+        if (first) {
+          const sm = r.summary || {};
+          $('#txCount').innerHTML = `${r.total} transactions 笔${r.total ? ` <span class="small muted">· income <b class="pos">${money(sm.income, sm.currency)}</b> · expense <b class="neg">${money(sm.expense, sm.currency)}</b></span>` : ''}`;
+          if (!r.items.length) { $('#txList').innerHTML = '<div class="empty">No transactions match 没有符合条件的流水</div>'; return; }
+        }
+        S.txRows = S.txRows.concat(r.items);
+        $('#txBody').insertAdjacentHTML('beforeend', txRowsHtml(r.items, {select: true}));
+        bindTxRows($('#txList'), () => load());
+        $$('.sel').forEach(c => c.onchange = upd);
+        const sa = $('#selAll'); if (sa) sa.onchange = () => { $$('.sel').forEach(c => c.checked = sa.checked); upd(); };
+      },
+    });
   };
   $('#flt').onsubmit = e => { e.preventDefault(); const fd = new FormData(e.target); S.txf = {limit: 100}; fd.forEach((val, k) => { if (val) S.txf[k] = val; }); Object.assign(f, S.txf); Object.keys(f).forEach(k => { if (!(k in S.txf)) delete f[k]; }); load(); };
   $('#fReset').onclick = () => { S.txf = {limit: 100}; location.hash = '#/transactions'; route(); };
-  $('#more').onclick = () => { f.offset = S.txRows.length; load(true).then(() => delete f.offset); };
   $('#bulkDel').onclick = async () => { const ids = $$('.sel:checked').map(c => +c.value); if (!await confirmBox(`Delete ${ids.length} transactions?`)) return; await guard(() => api('/api/transactions/bulk-delete', {method: 'POST', body: {ids}})); toast('Deleted'); load(); loadMeta(); };
   await load();
 };

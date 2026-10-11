@@ -407,3 +407,29 @@ Compare an account with a bank/card statement and lock the balance at that date.
   to from the previous checkpoint − statement balance) and **changed since** (effect of later edits), cleared/total count, and
   **Undo** for the latest checkpoint (un-flags its transactions; optionally deletes the adjustment it created).
 * Set balance has an "Also mark as reconciled" checkbox (`reconcile: true`). Imported 随手记 余额变更 rows are normal adjustments, not checkpoints.
+
+## Home 首页, account history 账户明细 and infinite scroll
+
+* **Home 首页** (first in the sidebar, and the page you land on after login or at `/`):
+  * Cards for the selected month's Income, Expense, Net (= income − expense) and Investment income. They follow the Reports rules.
+    The ‹ Oct 2026 › switcher changes the month.
+  * The quick-add box (Add / ✎ Review) and a **+ Detailed 详细记账** button for the full form.
+  * Below that, the month's transactions, newest first. Scrolling keeps loading older months.
+  * After you save anything, the cards and the list refresh.
+  * The old Dashboard is unchanged and is now called **Dashboard 仪表盘**.
+* **Account history:** click an account row (or **📜 History 明细**) on the Accounts page. It opens `#/account/<id>`:
+  * The balance, plus Set balance / Reconcile / Edit, and **+ Add** pre-filled with the account.
+  * A period filter (1M by default; 3M, 6M, 1Y, YTD, All, or a custom range), search, and a category filter.
+  * Period opening and closing balances, inflow and outflow.
+  * A **running balance** column. It's the account's real balance after each row and follows the reconciliation rule
+    (latest checkpoint + later transactions). Filters hide rows but don't change the balances. For investment accounts it shows the cash part.
+* **Infinite scroll** on Transactions, Home and account history. More rows load automatically as you scroll, with a
+  "Load more" button as a fallback.
+* **API:**
+  * `GET /api/transactions?limit=50[&before=<next_cursor>]` pages by cursor, newest first (`date|id`); there's also `has_more`.
+    The first page also returns `total` and `summary` (count, income, expense) for the whole filtered set. `offset=` still works.
+    The default limit is now 50 (max 500); the CSV export is unlimited.
+  * `GET /api/summary/month?month=YYYY-MM` gives income, expense, net, investment_income, prev/next and count.
+  * `GET /api/accounts/{id}/history?period=1M|3M|6M|1Y|YTD|ALL` (or `start`/`end`) also takes `q`, `category_id`, `before` and `limit`.
+    It returns items with `running_balance`/`running_shown`/`account_effect`, plus `balances` {opening, closing, inflow, outflow}.
+  * New indexes: `transactions(date,id)`, `(account_id,date,id)` and `(to_account_id,date,id)`.

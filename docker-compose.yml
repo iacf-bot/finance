@@ -12,10 +12,9 @@ services:
       FINANCE_IN_CONTAINER: "1"
       FINANCE_HOSTS: "0.0.0.0"
       FINANCE_PORT: "8088"
-      DATA_DIR: "/app/data"
     ports:
       - "127.0.0.1:8088:8088"
-      - "100.68.245.87:8088:8088"
+      - "100.83.220.110:8088:8088"
     volumes:
       - ./data:/app/data
       # for rclone → Google Drive uploads, mount your rclone config (created with `rclone config` on the host):

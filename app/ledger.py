@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any
 
 from .db import ACCOUNT_TYPES, ADJ_REASONS, Database, now_iso
@@ -541,7 +541,7 @@ def get_tx(db: Database, tid: int) -> dict | None:
     return decorate(r) if r else None
 
 
-def query_tx(db: Database, f: dict) -> tuple[list[dict], int]:
+def _tx_where(f: dict) -> tuple[str, list]:
     where, params = ["1=1"], []
     status = f.get("status") or "posted"
     if status != "all":
@@ -579,12 +579,185 @@ def query_tx(db: Database, f: dict) -> tuple[list[dict], int]:
         q = f"%{f['q']}%"
         where.append("(t.note LIKE ? OR m.name LIKE ? OR t.tags LIKE ? OR c.name LIKE ? OR c.name_zh LIKE ? OR a.name LIKE ? OR t.raw_text LIKE ? OR t.ticker LIKE ?)")
         params += [q] * 8
-    w = " WHERE " + " AND ".join(where)
+    return " WHERE " + " AND ".join(where), params
+
+
+def query_tx(db: Database, f: dict) -> tuple[list[dict], int]:
+    w, params = _tx_where(f)
     total = db.one(f"SELECT COUNT(*) n FROM ({TX_SELECT}{w})", params)["n"]
     limit = min(int(f.get("limit") or 100), 5000)
     offset = int(f.get("offset") or 0)
     rows = db.all(f"{TX_SELECT}{w} ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?", params + [limit, offset])
     return [decorate(r) for r in rows], total
+
+
+def encode_cursor(t: dict) -> str:
+    return f"{t['date']}|{t['id']}"
+
+
+def decode_cursor(c: str) -> tuple[str, int]:
+    """Cursor 'YYYY-MM-DD HH:MM[:SS]|id' (newest-first order: the next page starts strictly after this row)."""
+    try:
+        d, i = str(c).rsplit("|", 1)
+        return d, int(i)
+    except (ValueError, AttributeError):
+        raise ValidationError("bad cursor (expected 'date|id')")
+
+
+def _summary(db: Database, w: str, params: list) -> dict:
+    """Count and income/expense sums (base currency) of everything matching a filter (for list headers)."""
+    base = db.get_setting("base_currency", "USD"); rates = fx_rates(db)
+    inc = exp = 0.0; n = 0
+    for r in db.all(f"SELECT t.kind, t.currency, SUM(t.amount) s, COUNT(*) n FROM ({TX_SELECT}{w}) t GROUP BY t.kind, t.currency", params):
+        n += r["n"]
+        v = convert(r["s"] or 0, r["currency"], base, rates)
+        if r["kind"] == "income":
+            inc += v
+        elif r["kind"] == "expense":
+            exp += v
+        elif r["kind"] == "refund":
+            exp -= v
+    return {"count": n, "income": round(inc, 2), "expense": round(exp, 2), "net": round(inc - exp, 2), "currency": base}
+
+
+def page_tx(db: Database, f: dict) -> dict:
+    """Cursor (keyset) pagination, newest first: ?limit=50&before=<date|id>. The first page (no cursor) also returns
+    total + summary of the whole filtered set; later pages skip those counts. offset= still works for old clients."""
+    w, params = _tx_where(f)
+    limit = max(1, min(int(f.get("limit") or 50), 500))
+    cur = f.get("before")
+    kw, kp = w, list(params)
+    if cur:
+        d, i = decode_cursor(cur)
+        kw += " AND (t.date < ? OR (t.date = ? AND t.id < ?))"; kp += [d, d, i]
+    offset = 0 if cur else int(f.get("offset") or 0)
+    rows = [decorate(r) for r in db.all(f"{TX_SELECT}{kw} ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?", kp + [limit + 1, offset])]
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    out = {"items": rows, "has_more": has_more, "next_cursor": encode_cursor(rows[-1]) if has_more and rows else None}
+    if not cur or str(f.get("with_total", "")).lower() in ("1", "true"):
+        s = _summary(db, w, params)
+        out.update(total=s["count"], summary=s)
+    return out
+
+
+def tx_effect_for(t: dict, aid: int) -> float:
+    """Signed cash effect of one transaction on account `aid` (same rules as EFFECT_SQL / transfers in)."""
+    k, amt = t["kind"], t["amount"] or 0
+    if t.get("account_id") == aid:
+        return {"expense": -amt, "income": amt, "refund": amt, "transfer": -amt, "adjustment": amt, "buy": -amt,
+                "sell": amt, "dividend": amt, "invest_fee": -amt}.get(k, 0.0)
+    if k == "transfer" and t.get("to_account_id") == aid:
+        return t["to_amount"] if t.get("to_amount") is not None else amt
+    return 0.0
+
+
+def running_balances(db: Database, aid: int) -> tuple[dict[int, float], list[tuple[str, int, float]]]:
+    """Cash balance of account `aid` right after each posted transaction, oldest→newest by (date, id), following the
+    reconciliation rule used everywhere: balance(t) = latest checkpoint (as_of < t) + the account's transactions after it.
+    Returns ({tx_id: balance_after}, [(date, id, balance_after), ...] in order)."""
+    acct = db.one("SELECT opening_balance FROM accounts WHERE id=?", (aid,)) or {}
+    bal = float(acct.get("opening_balance") or 0)
+    cps = db.all("SELECT as_of, cash_balance FROM reconciliations WHERE account_id=? ORDER BY as_of, id", (aid,))
+    rows = db.all("""SELECT id, date, kind, amount, to_amount, account_id, to_account_id FROM transactions
+        WHERE status='posted' AND (account_id=? OR to_account_id=?) ORDER BY date, id""", (aid, aid))
+    after, seq, ci = {}, [], 0
+    for r in rows:
+        while ci < len(cps) and cps[ci]["as_of"] < r["date"]:
+            bal = cps[ci]["cash_balance"]; ci += 1
+        bal += tx_effect_for(r, aid)
+        b = round(bal, 2) + 0.0
+        after[r["id"]] = b
+        seq.append((r["date"], r["id"], b))
+    return after, seq
+
+
+def balance_before(seq: list[tuple[str, int, float]], cps: list[dict], when: str, opening: float) -> float:
+    """Cash balance just before `when` (all rows with date < when), from running_balances' sequence + checkpoints."""
+    import bisect
+    i = bisect.bisect_left(seq, (when, -1, float("-inf")))
+    bal, last_date = (seq[i - 1][2], seq[i - 1][0]) if i else (opening, "")
+    for cp in cps:  # a checkpoint after the last row but before `when` re-anchors
+        if last_date < cp["as_of"] < when:
+            bal = cp["cash_balance"]
+    return round(bal, 2) + 0.0
+
+
+HISTORY_PERIODS = {"1M": 1, "3M": 3, "6M": 6, "1Y": 12}
+
+
+def period_start(period: str, today: date | None = None) -> str | None:
+    today = today or date.today()
+    p = (period or "1M").upper()
+    if p == "ALL":
+        return None
+    if p == "YTD":
+        return f"{today.year}-01-01"
+    months = HISTORY_PERIODS.get(p, 1)
+    y, m = today.year, today.month - months
+    while m < 1:
+        m += 12; y -= 1
+    from calendar import monthrange
+    return f"{y}-{m:02d}-{min(today.day, monthrange(y, m)[1]):02d}"
+
+
+def account_history(db: Database, aid: int, f: dict, today: date | None = None) -> dict:
+    """Account detail page: the account's transactions (newest first, cursor pages) with a running balance column.
+    Default period: the last month. Running balance is the account's real balance after each row (filters like
+    search/category only hide rows; they don't change the balances)."""
+    a = next((x for x in accounts_with_balances(db) if x["id"] == aid), None)
+    if not a:
+        raise KeyError(aid)
+    period = (f.get("period") or ("CUSTOM" if f.get("start") or f.get("end") else "1M")).upper()
+    start = (f.get("start") or None) if period == "CUSTOM" else period_start(period, today)
+    end = (f.get("end") or None) if period == "CUSTOM" else None
+    q = {k: v for k, v in f.items() if k in ("q", "category_id", "kind", "member_id", "merchant_id", "project_id", "tag",
+                                               "reconciled", "before", "limit", "with_total")}
+    q.update(account_id=aid, start=start, end=end)
+    page = page_tx(db, q)
+    after, seq = running_balances(db, aid)
+    sign = -1 if a["is_liability"] else 1
+    for t in page["items"]:
+        b = after.get(t["id"])
+        t["running_balance"] = b
+        t["running_shown"] = None if b is None else round(b * sign, 2) + 0.0
+        t["account_effect"] = round(tx_effect_for(t, aid), 2) + 0.0
+    out = {"account": a, "period": period, "start": start, "end": end, "cash_only": bool(a.get("is_investment")), **page}
+    if not f.get("before"):
+        cps = db.all("SELECT as_of, cash_balance FROM reconciliations WHERE account_id=? ORDER BY as_of, id", (aid,))
+        opening = float(db.one("SELECT opening_balance FROM accounts WHERE id=?", (aid,))["opening_balance"] or 0)
+        o = balance_before(seq, cps, start, opening) if start else opening
+        c = balance_before(seq, cps, (end + " 99") if end else "9999", opening)
+        inflow = outflow = 0.0
+        for r in db.all(f"""SELECT id, kind, amount, to_amount, account_id, to_account_id FROM transactions
+                WHERE status='posted' AND (account_id=? OR to_account_id=?) AND date >= ? AND date <= ?""",
+                        (aid, aid, start or "", (end + " 99") if end else "9999")):
+            e = tx_effect_for(r, aid)
+            inflow += max(e, 0); outflow += max(-e, 0)
+        out["balances"] = {"opening": round(o * sign, 2) + 0.0, "closing": round(c * sign, 2) + 0.0,
+                           "inflow": round(inflow, 2), "outflow": round(outflow, 2), "liability": bool(a["is_liability"]),
+                           "currency": a["currency"]}
+    return out
+
+
+def month_summary(db: Database, month: str | None = None, ledger_id: int | None = None) -> dict:
+    """Home page cards: this month's income / expense / net / investment income (same rules as Reports)."""
+    month = month or date.today().strftime("%Y-%m")
+    y, m = map(int, month.split("-"))
+    if not (1 <= m <= 12):
+        raise ValidationError("month must be YYYY-MM")
+    s, e = month_range(month)  # e = first instant of the next month (exclusive)
+    t = totals(db, s, e, ledger_id)
+    py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
+    ny, nm = (y, m + 1) if m < 12 else (y + 1, 1)
+    cond, params = "status='posted' AND date >= ? AND date < ?", [s, e]
+    if ledger_id:
+        cond += " AND ledger_id=?"; params.append(ledger_id)
+    n = db.one(f"SELECT COUNT(*) n FROM transactions WHERE {cond}", params)["n"]
+    last_day = (date(ny, nm, 1) - timedelta(days=1)).isoformat()
+    return {"month": f"{y}-{m:02d}", "start": s, "end": last_day, "prev": f"{py}-{pm:02d}", "next": f"{ny}-{nm:02d}",
+            "income": t["income"], "expense": t["expense"], "net": t["net"], "investment_income": t["investment_income"],
+            "currency": t["currency"], "count": n}
 
 
 # ---------------------------------------------------------------- reports

@@ -127,15 +127,15 @@ function typeOptions(selected) { return Object.entries(S.meta.account_types).map
 
 /* ---------- navigation ---------- */
 const ROUTES = [
-  ['dashboard', '📊', 'Dashboard 首页'], ['transactions', '🧾', 'Transactions 流水'], ['accounts', '🏦', 'Accounts 账户'],
+  ['home', '🏠', 'Home 首页'], ['dashboard', '📊', 'Dashboard 仪表盘'], ['transactions', '🧾', 'Transactions 流水'], ['accounts', '🏦', 'Accounts 账户'],
   ['investments', '📈', 'Investments 投资'], ['budgets', '🎯', 'Budgets 预算'], ['scheduled', '🔁', 'Scheduled 定时'], ['reports', '📉', 'Reports 报表'],
   ['review', '📥', 'Quick add & Review 待确认'], ['settings', '⚙️', 'Settings 设置'],
 ];
 function renderNav() {
-  const cur = (location.hash.slice(2) || 'dashboard').split(/[/?]/)[0];
+  let cur = (location.hash.slice(2) || 'home').split(/[/?]/)[0]; if (cur === 'account') cur = 'accounts';
   const rc = S.meta ? S.meta.review_count : 0;
   $('#nav').innerHTML = ROUTES.map(([k, i, l]) => `<a href="#/${k}" class="${k === cur ? 'active' : ''}"><span class="ico">${i}</span>${l}${k === 'review' && rc ? `<span class="badge">${rc}</span>` : ''}</a>`).join('');
-  const mob = ['dashboard', 'transactions', 'accounts', 'review', 'settings'];
+  const mob = ['home', 'transactions', 'accounts', 'review', 'settings'];
   $('#mnav').innerHTML = ROUTES.filter(r => mob.includes(r[0])).map(([k, i, l]) => `<a href="#/${k}" class="${k === cur ? 'active' : ''}"><span class="ico">${i}</span>${l.split(' ')[0].replace('Quick', 'Review')}${k === 'review' && rc ? `<span class="badge">${rc}</span>` : ''}</a>`).join('');
 }
 function renderLedgers() {
@@ -143,12 +143,62 @@ function renderLedgers() {
   sel.innerHTML = `<option value="">All ledgers 全部账本</option>` + S.meta.ledgers.map(l => `<option value="${l.id}" ${l.id == S.ledger ? 'selected' : ''}>📒 ${esc(l.name)}</option>`).join('');
 }
 const VIEWS = {};
+const HIDDEN_ROUTES = [['account', '🏦', 'Account 账户明细']];  // not in the sidebar (#/account/<id>)
+
+/* Infinite scroll for cursor-paged lists (?before=<cursor>): an IntersectionObserver sentinel loads the next page,
+   with a loading indicator and a "Load more" button as fallback. load(cursor) -> {items, has_more, next_cursor};
+   append(page, isFirst) renders the rows. Returns {more(), done()} */
+function infiniteList(anchor, {load, append, endHtml = 'No more transactions 没有更多了', margin = '600px'}) {
+  let cursor = null, busy = false, done = false, first = true, dead = false;
+  const foot = document.createElement('div'); foot.className = 'inf-foot';
+  foot.innerHTML = '<div class="inf-spin" hidden><span class="spinner"></span> Loading… 加载中</div><button type="button" class="btn" hidden>Load more 加载更多</button><div class="inf-end small muted" hidden></div><div class="inf-sentinel"></div>';
+  anchor.after(foot);
+  const [spin, btn, end, sent] = foot.children;
+  const near = () => { const r = sent.getBoundingClientRect(); return r.top < innerHeight + 600 && r.bottom > -50 && foot.isConnected; };
+  const next = async () => {
+    if (busy || done || dead) return;
+    busy = true; spin.hidden = false; btn.hidden = true;
+    let p;
+    try { p = await load(cursor); }
+    catch (e) { busy = false; spin.hidden = true; btn.hidden = false; toast(e.message, true); return; }
+    if (dead) return;
+    append(p, first); first = false;
+    cursor = p.next_cursor; done = !p.has_more || !cursor;
+    busy = false; spin.hidden = true; btn.hidden = done;
+    end.hidden = !done || !p.items; end.innerHTML = done ? endHtml : '';
+    if (!done && near()) setTimeout(next, 0);  // short pages: keep filling the screen
+  };
+  btn.onclick = next;
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) next(); }, {rootMargin: margin});
+    io.observe(sent); (S.observers = S.observers || []).push(io);
+    const kill = io.disconnect.bind(io); io.disconnect = () => { dead = true; kill(); };
+  } else btn.hidden = false;
+  next();
+  return {more: next, done: () => done, foot};
+}
+function catIcon(t) {
+  if (t.kind === 'transfer') return '🔁';
+  if (t.kind === 'adjustment') return '⚖️';
+  if (['buy', 'sell'].includes(t.kind)) return '📈';
+  if (t.kind === 'dividend') return '💰';
+  if (t.kind === 'invest_fee') return '🧾';
+  const n = ((t.parent_category_name || t.category_name || '') + ' ' + (t.category_name || '')).toLowerCase();
+  const map = [[/food|dining|meal|restaurant|grocer|snack|drink|coffee/, '🍜'], [/shop|cloth|electronic|beauty/, '🛍️'], [/hous|rent|util|home|propert/, '🏠'],
+    [/transport|car|gas|fuel|taxi|parking|transit|travel/, '🚗'], [/entertain|movie|game|sport|hobby|vacation/, '🎮'], [/health|medic|pharm|doctor|fitness/, '💊'],
+    [/educat|book|course|tuition/, '📚'], [/social|gift|red envelope|donat/, '🎁'], [/financ|insur|tax|fee|interest/, '🏦'], [/famil|kid|child|baby|pet/, '👪'],
+    [/salary|work|wage|bonus|payroll/, '💼'], [/invest/, '📈']];
+  for (const [re, ic] of map) if (re.test(n)) return ic;
+  return t.kind === 'income' ? '💵' : t.kind === 'refund' ? '↩️' : '🧾';
+}
 async function route() {
-  const [name, ...rest] = (location.hash.slice(2) || 'dashboard').split('/');
-  const r = ROUTES.find(x => x[0] === name) || ROUTES[0];
+  const [name, ...rest] = (location.hash.slice(2) || 'home').split('/');
+  const r = ROUTES.find(x => x[0] === name) || HIDDEN_ROUTES.find(x => x[0] === name) || ROUTES[0];
   $('#title').textContent = r[2];
+  document.body.classList.toggle('on-home', r[0] === 'home');
   renderNav();
   Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
+  (S.observers || []).forEach(o => o.disconnect()); S.observers = [];
   const v = $('#view'); v.innerHTML = '<div class="empty">Loading…</div>';
   try { await VIEWS[r[0]](v, rest); } catch (e) { v.innerHTML = `<div class="card empty">⚠️ ${esc(e.message)}</div>`; }
 }
