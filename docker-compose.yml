@@ -14,7 +14,7 @@ services:
       FINANCE_PORT: "8088"
     ports:
       - "127.0.0.1:8088:8088"
-      - "100.83.220.110:8088:8088"
+      - "127.0.0.1:8088:8088"   # or "xxx.xxx.xxx.xxx:8088:8088" for your Tailscale IP
     volumes:
       - ./data:/app/data
       # for rclone → Google Drive uploads, mount your rclone config (created with `rclone config` on the host):
