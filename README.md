@@ -4,7 +4,7 @@ A self-hosted personal finance app modeled on Suishouji (随手记). It runs as 
 database and a responsive single-page UI, so it works on a phone too. UI and default categories are bilingual
 (English/中文).
 
-* **URL:** http://127.0.0.1:8088 or http://100.83.220.110:8088 (Tailscale). It binds only those two addresses,
+* **URL:** http://127.0.0.1:8088 or http://xxx.xxx.xxx.xxx:8088 (Tailscale). It binds only those two addresses,
   never 0.0.0.0.
 * **Data:** `data/finance.db` (SQLite, WAL mode), with backups in `data/backups/`.
 * **First run:** open the URL. You'll be sent to `/setup` to choose the single-user password.
@@ -168,7 +168,7 @@ tail -f data/logs/server.log
 Settings come from environment variables or an optional `.env` file next to the app (see `.env.example`). The app reads `.env`
 itself, so this works the same on Linux and Windows; `start.sh` also reads it.
 * `HOST`: the address(es) to listen on, comma separated. The app default is `127.0.0.1`; `start.sh` defaults to
-  `127.0.0.1,100.83.220.110` on this server. Any address that can't be bound is skipped with a warning. `0.0.0.0` is allowed,
+  `127.0.0.1,xxx.xxx.xxx.xxx` on this server. Any address that can't be bound is skipped with a warning. `0.0.0.0` is allowed,
   but it logs a warning: prefer explicit addresses.
 * `PORT` (default `8088`)
 * `DATA_DIR`: where `finance.db`, backups, logs, attachments and `secret.key` go. The default is `./data`; relative paths are relative to the app folder.
@@ -182,7 +182,7 @@ itself, so this works the same on Linux and Windows; `start.sh` also reads it.
 `*/5 * * * * /workspace/finance-app/watchdog.sh`
 
 **Docker (optional):** run `docker compose up -d --build`. The compose file publishes the port only on
-`127.0.0.1:8088` and `100.83.220.110:8088`, and `./data` is mounted into the container.
+`127.0.0.1:8088` and `xxx.xxx.xxx.xxx:8088`, and `./data` is mounted into the container.
 
 ### Password & admin CLI
 ```bash
