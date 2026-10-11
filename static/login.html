@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IACF Finance</title><link rel="stylesheet" href="/static/style.css">
+<style>body{display:grid;place-items:center;min-height:100vh;padding:16px}.box{max-width:400px;width:100%}.box h2{margin:0 0 4px}.err{color:var(--red);min-height:20px;font-size:13px}</style></head>
+<body><div class="card box">
+<div class="brand" style="color:var(--text);padding:0 0 12px"><span class="logo">记</span> IACF Finance <span class="muted small" style="font-weight:400">随手记-style</span></div>
+<div id="setup" style="display:none"><h2>Welcome — first-run setup</h2>
+<p class="muted">Choose the password for this single-user finance app (at least 8 characters). You'll use it to log in from your devices.</p>
+<form id="fs" class="grid"><label class="f"><span>New password</span><input type="password" id="p1" autocomplete="new-password" required minlength="8"></label>
+<label class="f"><span>Confirm password</span><input type="password" id="p2" autocomplete="new-password" required minlength="8"></label>
+<div class="err" id="e1"></div><button class="btn pri" type="submit">Set password &amp; start</button></form></div>
+<div id="login" style="display:none"><h2>Log in</h2><p class="muted">Enter your password.</p>
+<form id="fl" class="grid"><label class="f"><span>Password</span><input type="password" id="pw" autocomplete="current-password" required autofocus></label>
+<div class="err" id="e2"></div><button class="btn pri" type="submit">Log in</button></form>
+<p class="muted small">Forgot it? On the server run <code>.venv/bin/python -m app.cli reset-password</code> in the app folder.</p></div>
+</div>
+<script>
+const setup = location.pathname.startsWith('/setup');
+document.getElementById(setup ? 'setup' : 'login').style.display = '';
+async function post(url, body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||r.statusText);return j}
+document.getElementById('fs').onsubmit=async e=>{e.preventDefault();const a=p1.value,b=p2.value;if(a!==b){e1.textContent='Passwords do not match';return}
+ try{await post('/api/auth/setup',{password:a});location.href='/'}catch(err){e1.textContent=err.message}};
+document.getElementById('fl').onsubmit=async e=>{e.preventDefault();try{await post('/api/auth/login',{password:pw.value});location.href='/'}catch(err){e2.textContent=err.message}};
+</script></body></html>

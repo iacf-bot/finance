@@ -1,0 +1,29 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#e8553e"><title>IACF Finance</title>
+<link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><span class="logo">记</span> IACF Finance</div>
+    <nav class="nav" id="nav"></nav>
+    <div class="foot"><select id="ledgerSel" title="Ledger 账本" style="background:#2a3244;color:#cfd5e2;border-color:#394257"></select>
+      <div style="margin-top:8px"><a href="#" id="logout" style="color:#8d96a8">Log out</a></div></div>
+  </aside>
+  <div class="main">
+    <div class="topbar"><h1 id="title">Dashboard</h1>
+      <form class="qa" id="qaForm" autocomplete="off"><input id="qaInput" placeholder="Quick add 记一笔: lunch 25.5 chase sapphire · 午饭 35 支付宝"><button type="button" class="btn" id="qaFormBtn" title="Open in the pre-filled form to review before saving (Shift+Enter)">✎<span class="hide-m"> Review</span></button><button class="btn pri" id="qaAddBtn">Add</button></form>
+    </div>
+    <div class="content" id="view"></div>
+  </div>
+</div>
+<nav class="mobile-nav" id="mnav"></nav>
+<button class="fab" id="fab" title="New transaction 记一笔">+</button>
+<div id="toast"></div>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/js/01_core.js"></script>
+<script src="/static/js/02_tx.js"></script>
+<script src="/static/js/03_pages.js"></script>
+<script src="/static/js/04_settings.js"></script>
+<script src="/static/js/05_import.js"></script>
+</body></html>
