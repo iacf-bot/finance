@@ -5,14 +5,14 @@ const treeState = () => { try { return JSON.parse(localStorage.getItem(TREE_KEY)
 const nodeKey = n => n.id === null || n.id === undefined ? 'ungrouped' : 'g' + n.id;
 function acctRow(a) {
   const zero = Math.abs(a.balance) < 0.005;
-  return `<div class="acct tree-child${zero ? ' zero' : ''}${a.archived ? ' archived' : ''}" data-zero="${zero ? 1 : 0}" data-arch="${a.archived ? 1 : 0}">
+  return `<div class="acct tree-child${zero ? ' zero' : ''}${a.archived ? ' archived' : ''}" data-aid="${a.id}" title="Open history 查看明细" data-zero="${zero ? 1 : 0}" data-arch="${a.archived ? 1 : 0}">
       <div class="nm"><b>${isDemoName(a.name) ? '<span class="pill demo">DEMO</span> ' : ''}${esc(a.name)} ${a.last4 ? `<span class="muted small">••${esc(a.last4)}</span>` : ''}</b>
       <span class="small muted">${esc(a.type_label)} · ${a.currency}${a.aliases ? ' · aliases: ' + esc(a.aliases) : ''}${a.archived ? ' · archived' : ''}</span>
       ${a.reconciled_at ? `<div class="small"><a class="rec-link" href="javascript:void 0" data-rhist="${a.id}" title="Reconciliation history 对账记录">✔ Reconciled 已对账 ${esc(a.reconciled_at.slice(0, 10))}${a.reconciliation_count > 1 ? ` · ${a.reconciliation_count}×` : ''}</a></div>` : ''}
       ${a.type === 'credit_card' && a.credit_limit ? `<div class="small muted">Owed 欠款 ${money(a.owed, a.currency)} · Limit ${money(a.credit_limit, a.currency)} · Available ${money(a.available_credit, a.currency)}</div><div class="bar" style="max-width:260px"><i class="${a.owed / a.credit_limit > .8 ? 'over' : a.owed / a.credit_limit > .5 ? 'warn' : ''}" style="width:${Math.max(0, Math.min(100, a.owed / a.credit_limit * 100))}%"></i></div>` : ''}
       ${a.is_investment ? `<div class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</div>` : ''}</div>
       <div class="bal ${a.is_liability ? (a.owed > 0 ? 'neg' : zero ? '' : 'pos') : a.balance < 0 ? 'neg' : ''}">${a.is_liability ? `<span class="small muted">${a.owed >= 0 ? 'owed 欠' : 'credit 溢缴'} </span>${money(Math.abs(a.owed), a.currency)}` : money(a.balance, a.currency)}${a.currency !== S.meta.settings.base_currency ? `<div class="small muted">${money(a.balance_base)}</div>` : ''}</div>
-      <div class="row acts" style="flex-wrap:nowrap"><a class="btn sm" href="#/transactions/?account_id=${a.id}" title="Transactions">🧾</a><button class="btn sm" data-adj="${a.id}" title="Enter the real balance; an adjustment transaction records the difference">⚖️ <span class="hide-m">Set balance 调整余额</span></button><button class="btn sm" data-rec="${a.id}" title="Compare with a statement and lock the balance at that date">✔ <span class="hide-m">Reconcile 对账</span></button><button class="btn sm" data-edit="${a.id}">Edit</button></div></div>`;
+      <div class="row acts" style="flex-wrap:nowrap"><a class="btn sm" href="#/account/${a.id}" title="Account history 账户明细">📜 <span class="hide-m">History 明细</span></a><button class="btn sm" data-adj="${a.id}" title="Enter the real balance; an adjustment transaction records the difference">⚖️ <span class="hide-m">Set balance 调整余额</span></button><button class="btn sm" data-rec="${a.id}" title="Compare with a statement and lock the balance at that date">✔ <span class="hide-m">Reconcile 对账</span></button><button class="btn sm" data-edit="${a.id}">Edit</button></div></div>`;
 }
 function groupTotal(n) {
   const base = n.currency;
@@ -63,6 +63,7 @@ VIEWS.accounts = async (v) => {
   $('#addAcct').onclick = () => acctForm();
   $$('[data-edit]').forEach(b => b.onclick = () => acctForm(byId[b.dataset.edit]));
   $$('[data-adj]').forEach(b => b.onclick = () => adjustForm(byId[b.dataset.adj]));
+  $$('.acct[data-aid]').forEach(r => r.onclick = e => { if (!e.target.closest('button,a,input,select')) location.hash = '#/account/' + r.dataset.aid; });
   $$('[data-rec]').forEach(b => b.onclick = () => reconcileDialog(byId[b.dataset.rec]));
   $$('[data-rhist]').forEach(b => b.onclick = () => reconcileHistory(byId[b.dataset.rhist]));
   $('#grpBtn').onclick = () => groupsEditor(d.groups);

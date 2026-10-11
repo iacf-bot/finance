@@ -313,6 +313,10 @@ class Database:
             if "schedule_id" not in tcols:
                 con.execute("ALTER TABLE transactions ADD COLUMN schedule_id INTEGER")
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_sched ON transactions(schedule_id)")
+            # cursor pagination / account history (additive indexes)
+            con.execute("CREATE INDEX IF NOT EXISTS ix_tx_date_id ON transactions(date, id)")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_tx_acct_date ON transactions(account_id, date, id)")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_tx_to_acct_date ON transactions(to_account_id, date, id)")
             from .email_rules import PRESET_RULES, PRESET_VERSION
             ver = con.execute("SELECT value FROM settings WHERE key='preset_rules_version'").fetchone()
             if not ver or int(ver[0]) < PRESET_VERSION:

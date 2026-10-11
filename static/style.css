@@ -151,3 +151,50 @@ table.upcoming td{padding:5px 6px}
 .rec-stats>div{background:var(--bg2,#f6f7f9);border-radius:8px;padding:8px 10px}
 .rec-stats .lbl{font-size:12px;color:#777}.rec-stats .v{font-size:18px;font-weight:600}
 .rec-list{max-height:340px;overflow:auto}
+/* infinite scroll */
+.inf-foot{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 0 4px}
+.inf-foot .inf-sentinel{height:1px;width:100%}
+.inf-spin{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:8px}
+.spinner{width:14px;height:14px;border:2px solid var(--line);border-top-color:#e8553e;border-radius:50%;display:inline-block;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+[hidden]{display:none!important}
+/* Home 首页 */
+.home{max-width:920px;margin:0 auto}
+.month-sw{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:12px}
+.month-sw b{font-size:17px;min-width:110px;text-align:center}
+.home-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.home-cards .stat{padding:12px 14px}.home-cards .val{font-size:20px}
+.home-add{margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.home-add .qa{flex:1;min-width:240px;display:flex;gap:6px}.home-add .qa input{flex:1;min-width:0}
+.home-list{margin-top:12px;padding:6px 10px}
+.hmonth{position:sticky;top:0;background:var(--card,#fff);z-index:1;font-weight:700;font-size:13px;padding:10px 4px 6px;border-bottom:1px solid var(--line)}
+.hrow{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+.hrow:hover{background:rgba(0,0,0,.025)}
+.hico{width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:#f3f4f7;display:flex;align-items:center;justify-content:center;font-size:17px}
+.hmain{flex:1;min-width:0}.htop{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hsub{font-size:12px;display:flex;gap:6px;flex-wrap:wrap;min-width:0}.hwhat{color:var(--text,#333);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.hamt{text-align:right;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Account history 账户明细 */
+.acct-head h2{margin:2px 0;font-size:20px}
+.ah-main{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-top:4px}
+.ah-bal{text-align:right}.ah-bal .val{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
+.ah-acts{margin-top:12px;flex-wrap:wrap;gap:6px}
+.ah-flt{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ah-flt input[type=search]{flex:1;min-width:150px}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 11px;font-size:13px;cursor:pointer}
+.chip.on{background:#e8553e;border-color:#e8553e;color:#fff}
+.ah-sum{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 4px;color:var(--muted)}.ah-sum b{color:var(--text,#222)}
+.ah-table td.rb{color:#555;font-variant-numeric:tabular-nums}
+.hico-s{font-size:14px}
+.acct[data-aid]{cursor:pointer}.acct[data-aid]:hover{background:rgba(0,0,0,.02)}
+@media (max-width:760px){
+ .home-cards{grid-template-columns:1fr 1fr;gap:8px}.home-cards .stat{padding:10px}.home-cards .val{font-size:17px}
+ .home-add{padding:10px}.home-add #hqDetail{width:100%}
+ .home-list{padding:2px 6px}
+ .hide-s{display:none}
+ .ah-bal{text-align:left}.ah-table th:first-child,.ah-table td:first-child{white-space:nowrap}
+}
+.home-add .qa{order:0;max-width:none}.home-add #hqDetail{order:1}
+.ah-det{display:flex;gap:8px;align-items:flex-start}.ah-det>.hico-s{flex:0 0 auto;line-height:1.4}
+@media (max-width:760px){body.on-home .topbar .qa{display:none}}

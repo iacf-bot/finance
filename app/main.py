@@ -446,8 +446,23 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     # ------------------------------------------------------------ transactions
     @app.get("/api/transactions")
     def list_tx(request: Request):
-        rows, total = ledger.query_tx(db, dict(request.query_params))
-        return {"items": rows, "total": total}
+        """Newest first. Cursor pagination: ?limit=50 then ?before=<next_cursor>. The first page also has total + summary."""
+        return ledger.page_tx(db, dict(request.query_params))
+
+    @app.get("/api/summary/month")
+    def summary_month(month: str | None = None, ledger_id: int | None = None):
+        try:
+            return ledger.month_summary(db, month, ledger_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/accounts/{aid}/history")
+    def account_history(aid: int, request: Request):
+        """Account detail: ?period=1M|3M|6M|1Y|YTD|ALL (default 1M) or start/end, q, category_id, before, limit."""
+        try:
+            return ledger.account_history(db, aid, dict(request.query_params))
+        except KeyError:
+            raise HTTPException(404, "Account not found")
 
     @app.get("/api/transactions/export.csv")
     def export_tx(request: Request):
