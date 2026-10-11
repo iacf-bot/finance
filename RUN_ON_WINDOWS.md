@@ -1,6 +1,6 @@
 # Running IACF Finance on Windows
 
-These steps are for the Windows PC **iacf-bac** (Tailscale IP **100.68.245.87**). They also work on any Windows 10 or 11 PC.
+These steps are for the Windows PC **iacf-bac** (Tailscale IP **xxx.xxx.xxx.xxx**). They also work on any Windows 10 or 11 PC.
 You don't need Node.js, Docker or WSL: the web pages ship ready to use, and only Python is required.
 
 ---
@@ -80,7 +80,7 @@ You can set the same names as Windows environment variables instead. Environment
 
 1. In `.env`, listen on the Tailscale address as well as this PC (recommended):
    ```ini
-   HOST=127.0.0.1,100.68.245.87
+   HOST=127.0.0.1,xxx.xxx.xxx.xxx
    ```
    `HOST=0.0.0.0` (every network card, including Wi-Fi and Ethernet) also works, but then the firewall rule below is what keeps
    the app away from your local network. Prefer the Tailscale IP.
@@ -93,7 +93,7 @@ You can set the same names as Windows environment variables instead. Environment
      Check the adapter name with `Get-NetAdapter`. It's normally `Tailscale`.
    * To remove the rule later: `Remove-NetFirewallRule -DisplayName "IACF Finance (Tailscale only)"`
    * If you changed `PORT`, use that number instead of 8088.
-3. Restart the app (stop, then start). Then on another Tailscale device open **http://100.68.245.87:8088**
+3. Restart the app (stop, then start). Then on another Tailscale device open **http://xxx.xxx.xxx.xxx:8088**
    (or `http://iacf-bac:8088` if MagicDNS is on).
 
 The app uses plain HTTP. That's fine inside Tailscale, which encrypts the connection, but don't forward the port on your router.
@@ -184,8 +184,8 @@ Database changes are applied automatically and only ever add things. Your data i
 | **"Python 3.11 or newer was not found"** / `python` opens the Store | Install Python from python.org with "Add python.exe to PATH", turn off the App execution aliases (section 1), open a **new** window and run setup again. |
 | **"running scripts is disabled on this system"** | Use the `.bat` files, or run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` first. If it says the file "is not digitally signed", run `Get-ChildItem -Recurse \| Unblock-File`. |
 | **"Port 8088 is already in use"** | Something else is using the port. Find it with `Get-NetTCPConnection -LocalPort 8088 -State Listen` (the `OwningProcess` is the PID; check it with `Get-Process -Id <pid>`). Often it's a copy of this app that's already running: run stop.bat. Or set `PORT=8089` in `.env`. |
-| **Works on the PC but not from the phone** | 1) Does `.env` `HOST` include `100.68.245.87` (and did you restart)? Check `data\logs\server.log` for `Listening on http://100.68.245.87:8088`. 2) Was the firewall rule created in an Administrator window? Check it with `Get-NetFirewallRule -DisplayName "IACF Finance*"`. 3) Is Tailscale connected on both devices? Try `tailscale ping iacf-bac`. 4) From the other device: `Test-NetConnection 100.68.245.87 -Port 8088`. |
-| **"Could not bind 100.68.245.87"** in the log | Tailscale wasn't running (or the IP changed). Start Tailscale, check the IP with `tailscale ip -4`, then restart the app. |
+| **Works on the PC but not from the phone** | 1) Does `.env` `HOST` include `xxx.xxx.xxx.xxx` (and did you restart)? Check `data\logs\server.log` for `Listening on http://xxx.xxx.xxx.xxx:8088`. 2) Was the firewall rule created in an Administrator window? Check it with `Get-NetFirewallRule -DisplayName "IACF Finance*"`. 3) Is Tailscale connected on both devices? Try `tailscale ping iacf-bac`. 4) From the other device: `Test-NetConnection xxx.xxx.xxx.xxx -Port 8088`. |
+| **"Could not bind xxx.xxx.xxx.xxx"** in the log | Tailscale wasn't running (or the IP changed). Start Tailscale, check the IP with `tailscale ip -4`, then restart the app. |
 | **Forgot the password** | `.venv\Scripts\python.exe -m app.cli reset-password` (after stop.bat). The next visit shows /setup again. Your data is kept. |
 | **Show the API key** | `.venv\Scripts\python.exe -m app.cli show-api-key` |
 | **Anything else** | Look at `data\logs\server.log`, or run `.\start.ps1 -Foreground` to watch the messages live. |

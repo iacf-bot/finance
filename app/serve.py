@@ -1,7 +1,7 @@
 """Run the app with uvicorn bound to explicit addresses.
 
 Configuration (environment variables or a .env file next to the app; see app/config.py):
-  HOST  (default 127.0.0.1; comma-separated list allowed, e.g. "127.0.0.1,100.68.245.87")  - legacy: FINANCE_HOSTS
+  HOST  (default 127.0.0.1; comma-separated list allowed, e.g. "127.0.0.1,xxx.xxx.xxx.xxx")  - legacy: FINANCE_HOSTS
   PORT  (default 8088)                                                                     - legacy: FINANCE_PORT
   DATA_DIR (default ./data)
 Addresses that fail to bind are skipped with a warning. Works on Linux, macOS and Windows.

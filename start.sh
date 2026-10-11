@@ -14,7 +14,7 @@ if [[ ! -x .venv/bin/python ]]; then
 fi
 # optional settings: HOST, PORT, DATA_DIR, TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS (legacy FINANCE_HOSTS/FINANCE_PORT also work)
 if [[ -f .env ]]; then set -a; . ./.env; set +a; fi
-export FINANCE_HOSTS="${FINANCE_HOSTS:-${HOST:-127.0.0.1,100.83.220.110}}"
+export FINANCE_HOSTS="${FINANCE_HOSTS:-${HOST:-127.0.0.1}}"  # add your Tailscale IP, e.g. 127.0.0.1,xxx.xxx.xxx.xxx
 export FINANCE_PORT="${FINANCE_PORT:-${PORT:-8088}}"
 nohup .venv/bin/python -m app.serve >> data/logs/server.log 2>&1 &
 echo $! > $PIDFILE

@@ -22,10 +22,10 @@ def test_defaults(clean_env):
 
 
 def test_env_overrides_and_legacy_names(clean_env, tmp_path):
-    clean_env.setenv("HOST", "127.0.0.1, 100.68.245.87")
+    clean_env.setenv("HOST", "127.0.0.1, xxx.xxx.xxx.xxx")
     clean_env.setenv("PORT", "9000")
     clean_env.setenv("DATA_DIR", str(tmp_path / "d"))
-    assert config.hosts() == ["127.0.0.1", "100.68.245.87"] and config.port() == 9000
+    assert config.hosts() == ["127.0.0.1", "xxx.xxx.xxx.xxx"] and config.port() == 9000
     assert config.db_path() == (tmp_path / "d" / "finance.db").resolve()
     clean_env.setenv("FINANCE_HOSTS", "127.0.0.1")  # legacy name wins (Linux start.sh / docker set it)
     clean_env.setenv("FINANCE_DB", str(tmp_path / "x" / "f.db"))
