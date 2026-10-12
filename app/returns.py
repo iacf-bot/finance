@@ -332,7 +332,7 @@ def reclassify_preview(db: Database, include_savings: bool = False, account_ids:
     acond = f"a.type IN ({tq})" + (f" OR a.id IN ({','.join('?' * len(extra))})" if extra else "")
     if only and extra:  # just these accounts (account detail page hint)
         acond = f"a.id IN ({','.join('?' * len(extra))})"
-    rows = db.all(f"""SELECT t.id, t.date, t.amount, t.currency, t.note, t.source, t.account_id, a.name account_name,
+    rows = db.all(f"""SELECT t.id, t.date, t.amount, t.currency, t.note, t.source, t.pr_class, t.account_id, a.name account_name,
         a.type account_type, {REASON_SQL} reason FROM transactions t JOIN accounts a ON a.id=t.account_id
         LEFT JOIN categories c ON c.id=t.category_id
         WHERE t.kind='adjustment' AND t.status='posted' AND ({acond}) ORDER BY a.name, t.date, t.id""", extra)

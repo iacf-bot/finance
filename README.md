@@ -469,14 +469,16 @@ contributions) and **returns**.
   *Employer match 雇主匹配*) + refunds − withdrawals/expenses + adjustments with reason *Opening balance* or
   *Unrecorded income/spending*. A transfer between two investment accounts moves principal from one to the other.
 * **Returns** = prior returns in the opening balance + adjustments with reason *Investment gain/loss*, *Interest*
-  or *Fees* (negative) + dividends − investment fees + income in an interest/dividend category + trade gains on
+  or *Fees* (negative) + **unclassified balance adjustments** (*Correction/other* or no reason, e.g. imported
+  余额变更: on an investment account a balance change is a gain/loss) + dividends − investment fees + income in an interest/dividend category + trade gains on
   holdings (realized + unrealized = market value − buys + sells).
 * **Current value 当前市值** = the account balance (cash + holdings at market value). If it is not equal to
-  principal + returns, the **unexplained difference 未解释差额** is shown. It comes from unclassified balance
-  adjustments (*Correction/other*, e.g. imported 余额变更) and reconciliation differences.
-  * Unclassified corrections count as returns **only after** you run **Investments → 🏷 Reclassify**.
-  * The account page shows a hint with a button that opens the tool for just that account.
-  * Nothing is changed automatically.
+  principal + returns, the **unexplained difference 未解释差额** is shown. It only comes from genuine gaps:
+  reconciliation differences and transactions you marked *Other*.
+  * If an account's **first** record is an unclassified adjustment (an export usually has no opening balance), it
+    counts as returns. The account page shows a hint with a button that opens **🏷 Reclassify** for that account,
+    so you can mark it as *Opening balance* (principal).
+  * This is computation only: no data is changed.
 * **Overrides:** the transaction form has *Investment: counts as 计入* (Auto / Principal / Returns / Other).
   The account form has *Prior returns in opening balance* (default 0, so the whole opening balance is principal).
 

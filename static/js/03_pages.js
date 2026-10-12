@@ -22,7 +22,7 @@ function pctTxt(p) { return p === null || p === undefined ? '' : ` (${p >= 0 ? '
 function prLine(x) {
   const r = x.returns;
   return `Principal 本金 ${money(x.principal, x.currency)} · Returns 收益 <span class="${r < 0 ? 'neg' : r > 0 ? 'pos' : ''}">${r >= 0 ? '+' : '−'}${money(Math.abs(r), x.currency)}${pctTxt(x.returns_pct)}</span>`
-    + (Math.abs(x.unexplained || 0) >= 0.01 ? ` · <span class="muted" title="Value − principal − returns: unclassified corrections / reconciliation differences">unexplained 未解释 ${money(x.unexplained, x.currency)}</span>` : '');
+    + (Math.abs(x.unexplained || 0) >= 0.01 ? ` · <span class="muted" title="Value − principal − returns: reconciliation differences / transactions marked Other">unexplained 未解释 ${money(x.unexplained, x.currency)}</span>` : '');
 }
 function groupTotal(n) {
   const base = n.currency;

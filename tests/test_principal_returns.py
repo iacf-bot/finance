@@ -52,29 +52,51 @@ def test_transfer_between_investment_accounts_moves_principal(client):
     assert g["invest"]["principal"] == 1050 and g["invest"]["unexplained"] == 0
 
 
-def test_corrections_unexplained_overrides_and_opening_split(client):
+def test_corrections_count_as_returns_overrides_and_opening_split(client):
     A, B, C = setup(client)
-    cor = tx(client, kind="adjustment", account_id=A, amount=40)  # unclassified correction -> other
+    cor = tx(client, kind="adjustment", account_id=A, amount=40)  # no reason (like imported 余额变更) -> returns
     x = inv(client, A)
-    assert x["unexplained"] == 40 and x["correction_count"] == 1 and x["principal"] == 1000 and x["returns"] == 0
+    assert (x["principal"], x["returns"], x["unexplained"], x["correction_count"]) == (1000, 40, 0, 1)
+    tx(client, kind="adjustment", account_id=A, amount=-15, adj_reason="correction")  # explicit Correction -> returns
+    tx(client, kind="adjustment", account_id=A, amount=30, adj_reason="unrecorded_income")  # stays principal
+    x = inv(client, A)
+    assert (x["principal"], x["returns"], x["unexplained"]) == (1030, 25, 0)
     h = client.get(f"/api/accounts/{A}/history?period=ALL").json()
-    assert h["invest"]["correction_count"] == 1
-    assert next(t for t in h["items"] if t["id"] == cor["id"])["pr_badge"] == "其他"
-    # the account-only reclassify preview lists it (read-only)
-    pv = client.get(f"/api/adjustments/reclassify?account_ids={A}&only=1").json()
-    assert {r["account_id"] for r in pv["rows"]} == {A}
-    # override: mark it as returns
-    client.put(f"/api/transactions/{cor['id']}", json={"pr_class": "returns"})
+    row = next(t for t in h["items"] if t["id"] == cor["id"])
+    assert row["pr_badge"] == "收益" and "auto" in row["pr_label"]
+    assert h["invest"]["likely_opening_count"] == 0  # first record is the real opening balance
+    # override: mark it as principal / other (other = genuine unexplained gap)
+    client.put(f"/api/transactions/{cor['id']}", json={"pr_class": "principal"})
+    assert (inv(client, A)["principal"], inv(client, A)["returns"]) == (1070, -15)
+    client.put(f"/api/transactions/{cor['id']}", json={"pr_class": "other"})
     x = inv(client, A)
-    assert (x["returns"], x["unexplained"], x["correction_count"]) == (40, 0, 0)
-    # a deposit marked as returns instead of principal
+    assert (x["principal"], x["returns"], x["unexplained"]) == (1030, -15, 40)
+    client.put(f"/api/transactions/{cor['id']}", json={"pr_class": "auto"})
+    assert inv(client, A)["unexplained"] == 0
     d = tx(client, kind="income", account_id=A, amount=10, pr_class="returns")
-    assert inv(client, A)["returns"] == 50 and d["pr_class"] == "returns"
+    assert inv(client, A)["returns"] == 35 and d["pr_class"] == "returns"
     assert client.post("/api/transactions", json={"kind": "income", "account_id": A, "amount": 1, "pr_class": "bogus"}).status_code == 400
     # opening split: 200 of the 1000 opening balance were prior returns
     client.put(f"/api/accounts/{A}", json={"opening_returns": 200})
     x = inv(client, A)
-    assert (x["principal"], x["returns"], x["unexplained"]) == (800, 250, 0)
+    assert (x["principal"], x["returns"], x["unexplained"]) == (830, 235, 0)
+
+
+def test_first_unclassified_record_hint_and_reconciliation_gap(client):
+    r = client.post("/api/accounts", json={"name": "Imported Fund", "type": "brokerage", "currency": "USD"}).json()
+    A = r["id"]
+    first = tx(client, kind="adjustment", account_id=A, amount=5000, date="2026-01-05")  # imported starting balance
+    tx(client, kind="adjustment", account_id=A, amount=250, date="2026-02-05")
+    h = client.get(f"/api/accounts/{A}/history?period=ALL").json()["invest"]
+    assert (h["principal"], h["returns"], h["likely_opening_count"], h["likely_opening_amount"]) == (0, 5250, 1, 5000)
+    client.put(f"/api/transactions/{first['id']}", json={"adj_reason": "opening"})  # what Reclassify would do
+    h = client.get(f"/api/accounts/{A}/history?period=ALL").json()["invest"]
+    assert (h["principal"], h["returns"], h["likely_opening_count"]) == (5000, 250, 0)
+    # a reconciliation checkpoint that differs from the ledger is a genuine gap -> unexplained
+    rr = client.post(f"/api/accounts/{A}/reconcile", json={"balance": 5300, "as_of": "2026-03-01", "accept": True})
+    assert rr.status_code == 200, rr.text
+    x = inv(client, A)
+    assert x["value"] == 5300 and x["unexplained"] == 50
 
 
 def test_trades_dividends_period_and_chart(client):

@@ -7,12 +7,13 @@ For one account (amounts in the account's currency):
                + refunds − expenses/withdrawals
                + balance adjustments with reason Opening balance / Unrecorded income / Unrecorded spending
 * returns    = prior returns in the opening balance (accounts.opening_returns)
-               + adjustments with reason Investment gain/loss, Interest, Fees (negative)
+               + adjustments with reason Investment gain/loss, Interest, Fees (negative), and — automatically —
+                 unclassified balance adjustments (Correction/other or no reason, e.g. imported 余额变更)
                + dividends − investment fees + income whose category is interest/dividend/investment income
                + trade gains on holdings (realized + unrealized) = holdings market value − buys + sells
-* other      = unclassified balance adjustments (Correction/other, e.g. imported 余额变更 not yet reclassified)
+* other      = only transactions explicitly overridden as 'other' (excluded from principal and returns)
 * value      = the account balance (cash anchored at reconciliation checkpoints + holdings at market value)
-* unexplained difference = value − principal − returns  (unclassified corrections + reconciliation jumps)
+* unexplained difference = value − principal − returns  (reconciliation jumps and 'other' overrides only)
 Any transaction can be overridden with transactions.pr_class = 'principal' | 'returns' | 'other' (NULL = automatic).
 """
 from __future__ import annotations
@@ -33,7 +34,7 @@ LABELS = {
     "opening": "Opening balance 期初", "refund": "Refund 退款", "unrecorded": "Unrecorded flow 未记收支",
     "gain": "Gain/loss 投资收益", "interest": "Interest 利息", "fees": "Fees 费用", "dividend": "Dividend 股息",
     "invest_fee": "Investment fee 投资费用", "income_return": "Investment income 投资收入",
-    "correction": "Unclassified correction 未分类校正", "trade": "Trade 交易", "override": "Set manually 手动",
+    "correction": "Other 其他", "adj_auto": "Balance adj. → gain/loss (auto) 余额调整计入收益", "trade": "Trade 交易", "override": "Set manually 手动",
 }
 BADGE = {"principal": "本金", "returns": "收益", "other": "其他", "trade": "交易"}
 
@@ -78,7 +79,7 @@ def classify(r: dict, aid: int, inv_ids: set | None = None) -> tuple[str, str]:
             return "principal", "opening"
         if reason in ("unrecorded_spending", "unrecorded_income"):
             return "principal", "unrecorded"
-        return "other", "correction"
+        return "returns", "adj_auto"  # Correction/other or no reason (e.g. imported 余额变更): a change in value
     return "other", "correction"
 
 
@@ -134,7 +135,7 @@ def summary(acct: dict, w: dict) -> dict:
 
 
 def correction_counts(db: Database, ids: list[int]) -> dict[int, int]:
-    """Unclassified (Correction/other) balance adjustments per account that would count as 'other'."""
+    """Unclassified (Correction/other) balance adjustments per account (counted as returns automatically)."""
     if not ids:
         return {}
     q = ",".join("?" * len(ids))
@@ -243,7 +244,11 @@ def history_extras(db: Database, acct: dict, page_items: list[dict], start, end,
     if not first_page:
         return None
     cc = correction_counts(db, [acct["id"]]).get(acct["id"], 0)
-    return {**summary(full, w), "correction_count": cc,
+    from .returns import reclassify_preview
+    likely_opening = [r for r in reclassify_preview(db, account_ids=[acct["id"]], only=True)["rows"]
+                      if r["proposed_reason"] == "opening" and r.get("pr_class") in (None, "")]
+    return {**summary(full, w), "correction_count": cc, "likely_opening_count": len(likely_opening),
+            "likely_opening_amount": round(sum(r["amount"] for r in likely_opening), 2) + 0.0,
             "period": period_figures(db, full, w, start, end, today),
             "series": investment_series(db, full, start, end, "auto", today, w),
             "running_note": "Running returns count recorded returns only; trade gains on holdings are in the header."}
