@@ -7,14 +7,16 @@ For one account (amounts in the account's currency):
                + refunds − expenses/withdrawals
                + balance adjustments with reason Opening balance / Unrecorded income / Unrecorded spending
 * returns    = prior returns in the opening balance (accounts.opening_returns)
-               + adjustments with reason Investment gain/loss, Interest, Fees (negative), and — automatically —
-                 unclassified balance adjustments (Correction/other or no reason, e.g. imported 余额变更)
+               + adjustments with reason Investment gain/loss, Interest, Fees (negative)
                + dividends − investment fees + income whose category is interest/dividend/investment income
                + trade gains on holdings (realized + unrealized) = holdings market value − buys + sells
-* other      = only transactions explicitly overridden as 'other' (excluded from principal and returns)
+* unexplained 未分类 = unclassified balance adjustments (Correction/other or no reason, e.g. imported 余额变更) and
+               transactions overridden as 'unexplained'; plus `reconciliation_diff` (value gaps from reconciliation
+               checkpoints / anything else not explained by the ledger) as a separate subfield
 * value      = the account balance (cash anchored at reconciliation checkpoints + holdings at market value)
-* unexplained difference = value − principal − returns  (reconciliation jumps and 'other' overrides only)
-Any transaction can be overridden with transactions.pr_class = 'principal' | 'returns' | 'other' (NULL = automatic).
+* value = principal + returns + unexplained, where unexplained = unclassified + reconciliation_diff
+Any transaction can be overridden with transactions.pr_class = 'principal' | 'returns' | 'unexplained'
+(NULL = automatic; 'other' is accepted as an older name for 'unexplained').
 """
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ from datetime import date, timedelta
 from .db import Database
 from .ledger import GAIN_REASONS, REASON_SQL, convert, fx_rates, is_investment, tx_effect_for
 
-PR_CLASSES = ("principal", "returns", "other")
+PR_CLASSES = ("principal", "returns", "unexplained", "other")
 RETURN_INCOME_RX = re.compile(r"interest|dividend|利息|股息|分红|红利|投资收益|理财收益|capital gain", re.I)
 MATCH_RX = re.compile(r"employer|match|雇主|匹配|公司配", re.I)
 LABELS = {
@@ -34,9 +36,9 @@ LABELS = {
     "opening": "Opening balance 期初", "refund": "Refund 退款", "unrecorded": "Unrecorded flow 未记收支",
     "gain": "Gain/loss 投资收益", "interest": "Interest 利息", "fees": "Fees 费用", "dividend": "Dividend 股息",
     "invest_fee": "Investment fee 投资费用", "income_return": "Investment income 投资收入",
-    "correction": "Other 其他", "adj_auto": "Balance adj. → gain/loss (auto) 余额调整计入收益", "trade": "Trade 交易", "override": "Set manually 手动",
+    "correction": "Unclassified balance adj. 未分类余额调整", "trade": "Trade 交易", "override": "Set manually 手动",
 }
-BADGE = {"principal": "本金", "returns": "收益", "other": "其他", "trade": "交易"}
+BADGE = {"principal": "本金", "returns": "收益", "unexplained": "未分类", "trade": "交易"}
 
 
 def _rows(db: Database, ids: list[int]) -> list[dict]:
@@ -55,7 +57,7 @@ def classify(r: dict, aid: int, inv_ids: set | None = None) -> tuple[str, str]:
     if k in ("buy", "sell"):
         return "trade", "trade"
     if r.get("pr_class") in PR_CLASSES:
-        return r["pr_class"], "override"
+        return ("unexplained" if r["pr_class"] == "other" else r["pr_class"]), "override"
     if k == "transfer":
         return "principal", "transfer_in" if r.get("to_account_id") == aid and r.get("account_id") != aid else "transfer_out"
     if k == "dividend":
@@ -79,8 +81,8 @@ def classify(r: dict, aid: int, inv_ids: set | None = None) -> tuple[str, str]:
             return "principal", "opening"
         if reason in ("unrecorded_spending", "unrecorded_income"):
             return "principal", "unrecorded"
-        return "returns", "adj_auto"  # Correction/other or no reason (e.g. imported 余额变更): a change in value
-    return "other", "correction"
+        return "unexplained", "correction"  # Correction/other or no reason (e.g. imported 余额变更): own category
+    return "unexplained", "correction"
 
 
 def walk(db: Database, acct: dict, rows: list[dict] | None = None) -> dict:
@@ -113,7 +115,7 @@ def walk(db: Database, acct: dict, rows: list[dict] | None = None) -> dict:
             trade_net += e  # sells (+) − buys (−)
         else:
             other += e
-        info[r["id"]] = (cls, sub, round(e, 2) + 0.0, round(p, 2) + 0.0, round(ret, 2) + 0.0)
+        info[r["id"]] = (cls, sub, round(e, 2) + 0.0, round(p, 2) + 0.0, round(ret, 2) + 0.0, round(other, 2) + 0.0)
         seq.append((r["date"], p, ret, trade_net, other))
     return {"p0": p0, "r0": r0, "shift_date": shift_date, "principal_tx": p, "returns_tx": ret, "trade_net": trade_net, "other": other, "info": info, "seq": seq,
             "opening_total": legacy_open + sum(info[r["id"]][2] for r in rows if info[r["id"]][1] == "opening"),
@@ -128,9 +130,11 @@ def summary(acct: dict, w: dict) -> dict:
     value = float(acct.get("balance") or 0)
     unexplained = value - principal - rets
     R = lambda v: round(v, 2) + 0.0
+    recon = unexplained - w["other"]
     return {"currency": acct["currency"], "value": R(value), "principal": R(principal), "returns": R(rets),
             "returns_pct": round(rets / principal * 100, 2) if principal > 0.005 else None,
-            "trade_gains": R(market), "unclassified_corrections": R(w["other"]), "unexplained": R(unexplained),
+            "trade_gains": R(market), "unexplained": R(unexplained), "unclassified": R(w["other"]),
+            "reconciliation_diff": R(recon) if abs(recon) >= 0.005 else 0.0,
             "opening_total": R(w["opening_total"]), "opening_returns": R(w["opening_returns"])}
 
 
@@ -170,7 +174,7 @@ def group_totals(members: list[dict], base: str, rates: dict) -> dict | None:
         return None
     s = defaultdict(float)
     for a in inv:
-        for k in ("value", "principal", "returns", "unexplained"):
+        for k in ("value", "principal", "returns", "unexplained", "unclassified", "reconciliation_diff"):
             s[k] += convert(a["invest"][k], a["currency"], base, rates)
     p, r = s["principal"], s["returns"]
     return {"currency": base, **{k: round(v, 2) + 0.0 for k, v in s.items()},
@@ -206,7 +210,7 @@ def period_figures(db: Database, acct: dict, w: dict, start: str | None, end: st
             flows.append((max(0.0, min(1.0, (T - (dd - s).days - 0.5) / T)), eff))
         elif cls == "returns":
             ret_tx += eff
-        elif cls == "other":
+        elif cls == "unexplained":
             other += eff
     if w["shift_date"] and lo <= w["shift_date"] <= hi and w["opening_returns"]:
         # the opening's prior-returns part is not a contribution: move it from principal flows to returns
@@ -221,7 +225,8 @@ def period_figures(db: Database, acct: dict, w: dict, start: str | None, end: st
     R = lambda v: round(v, 2) + 0.0
     return {"start": s.isoformat(), "end": e.isoformat(), "currency": acct["currency"], "start_value": R(v0),
             "end_value": R(v1), "contributions": R(contrib), "withdrawals": R(withdraw), "net_contributions": R(net),
-            "returns": R(period_returns), "trade_gains": R(market), "other": R(other + c["components"]["reconciliation"]),
+            "returns": R(period_returns), "trade_gains": R(market), "unexplained": R(other + c["components"]["reconciliation"]),
+            "unclassified": R(other), "reconciliation_diff": R(c["components"]["reconciliation"]),
             "md_return": round(md * 100, 2) if md is not None else None}
 
 
@@ -240,7 +245,7 @@ def history_extras(db: Database, acct: dict, page_items: list[dict], start, end,
             continue
         cls, sub = inf[0], inf[1]
         t.update(pr_class=cls, pr_sub=sub, pr_badge=BADGE[cls], pr_label=LABELS.get(sub, sub),
-                 running_principal=inf[3], running_returns=inf[4])
+                 running_principal=inf[3], running_returns=inf[4], running_unexplained=inf[5])
     if not first_page:
         return None
     cc = correction_counts(db, [acct["id"]]).get(acct["id"], 0)
@@ -322,6 +327,8 @@ def investment_series(db: Database, acct: dict, start=None, end=None, interval: 
             "start_value": a.get("value"), "end_value": b.get("value"),
             "principal_change": R((b.get("principal") or 0) - (a.get("principal") or 0)),
             "returns_change": R((b.get("returns") or 0) - (a.get("returns") or 0)),
+            "start_unexplained": a.get("unexplained"), "end_unexplained": b.get("unexplained"),
+            "unexplained_change": R((b.get("unexplained") or 0) - (a.get("unexplained") or 0)),
             "contributions": pf["contributions"], "withdrawals": pf["withdrawals"], "period_returns": pf["returns"],
             "return_pct": pf["md_return"]}
     return {"account_id": acct["id"], "currency": acct["currency"], "from": s.isoformat(), "to": e.isoformat(),

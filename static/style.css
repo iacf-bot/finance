@@ -210,3 +210,6 @@ table.upcoming td{padding:5px 6px}
 .ah-table td.prc{color:#555;font-variant-numeric:tabular-nums}.pr-tog{display:none}
 @media (max-width:700px){.inv-cards{grid-template-columns:1fr 1fr}.inv-cards .ic:first-child{grid-column:1/-1}.inv-cards .val{font-size:17px}
  .ah-table .prc{display:none}#ahList.show-pr .ah-table .prc{display:table-cell}.pr-tog{display:inline-block}}
+.pr-unexplained{background:#fdf0dc;color:#9a6200}.inv-cards{grid-template-columns:repeat(4,1fr)}.inv-cards .ic.unexp .val{color:#9a6200}.unexp-txt{color:#9a6200}
+@media (max-width:700px){.inv-cards{grid-template-columns:1fr 1fr}}
+@media (max-width:700px){.inv-cards .ic:first-child{grid-column:auto}}

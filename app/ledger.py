@@ -419,10 +419,10 @@ def normalize_tx(con, data: dict, rates: dict[str, float], existing: dict | None
         pc = str(tx.get("pr_class") or "").strip().lower()
         if pc in ("", "auto", "none", "null"):
             tx["pr_class"] = None
-        elif pc in ("principal", "returns", "other"):
-            tx["pr_class"] = pc
+        elif pc in ("principal", "returns", "unexplained", "other"):
+            tx["pr_class"] = "unexplained" if pc == "other" else pc
         else:
-            raise ValidationError("pr_class must be principal, returns, other or auto")
+            raise ValidationError("pr_class must be principal, returns, unexplained or auto")
     acct = con.execute("SELECT * FROM accounts WHERE id=?", (tx["account_id"],)).fetchone() if tx.get("account_id") else None
     if tx.get("account_id") and not acct:
         raise ValidationError("Account not found")

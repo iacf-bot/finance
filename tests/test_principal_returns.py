@@ -52,51 +52,61 @@ def test_transfer_between_investment_accounts_moves_principal(client):
     assert g["invest"]["principal"] == 1050 and g["invest"]["unexplained"] == 0
 
 
-def test_corrections_count_as_returns_overrides_and_opening_split(client):
+def test_corrections_are_unexplained_overrides_and_opening_split(client):
     A, B, C = setup(client)
-    cor = tx(client, kind="adjustment", account_id=A, amount=40)  # no reason (like imported 余额变更) -> returns
+    cor = tx(client, kind="adjustment", account_id=A, amount=40)  # no reason (like imported 余额变更) -> unexplained
     x = inv(client, A)
-    assert (x["principal"], x["returns"], x["unexplained"], x["correction_count"]) == (1000, 40, 0, 1)
-    tx(client, kind="adjustment", account_id=A, amount=-15, adj_reason="correction")  # explicit Correction -> returns
-    tx(client, kind="adjustment", account_id=A, amount=30, adj_reason="unrecorded_income")  # stays principal
+    assert (x["principal"], x["returns"], x["unexplained"], x["unclassified"], x["reconciliation_diff"]) == (1000, 0, 40, 40, 0)
+    assert x["correction_count"] == 1 and x["returns_pct"] == 0
+    tx(client, kind="adjustment", account_id=A, amount=-15, adj_reason="correction")  # explicit Correction -> unexplained
+    tx(client, kind="adjustment", account_id=A, amount=30, adj_reason="unrecorded_income")  # principal
+    tx(client, kind="adjustment", account_id=A, amount=60, adj_reason="investment_gain")  # returns
     x = inv(client, A)
-    assert (x["principal"], x["returns"], x["unexplained"]) == (1030, 25, 0)
+    assert (x["principal"], x["returns"], x["unexplained"], x["value"]) == (1030, 60, 25, 1115)
+    assert x["value"] == x["principal"] + x["returns"] + x["unexplained"]
     h = client.get(f"/api/accounts/{A}/history?period=ALL").json()
     row = next(t for t in h["items"] if t["id"] == cor["id"])
-    assert row["pr_badge"] == "收益" and "auto" in row["pr_label"]
-    assert h["invest"]["likely_opening_count"] == 0  # first record is the real opening balance
-    # override: mark it as principal / other (other = genuine unexplained gap)
-    client.put(f"/api/transactions/{cor['id']}", json={"pr_class": "principal"})
-    assert (inv(client, A)["principal"], inv(client, A)["returns"]) == (1070, -15)
-    client.put(f"/api/transactions/{cor['id']}", json={"pr_class": "other"})
+    assert row["pr_badge"] == "未分类" and row["pr_class"] == "unexplained" and row["running_unexplained"] == 40
+    assert h["invest"]["correction_count"] == 2
+    # the account-only reclassify preview lists them (read-only)
+    pv = client.get(f"/api/adjustments/reclassify?account_ids={A}&only=1").json()
+    assert {r["account_id"] for r in pv["rows"]} == {A} and pv["count"] == 2
+    # overrides win
+    client.put(f"/api/transactions/{cor['id']}", json={"pr_class": "returns"})
     x = inv(client, A)
-    assert (x["principal"], x["returns"], x["unexplained"]) == (1030, -15, 40)
-    client.put(f"/api/transactions/{cor['id']}", json={"pr_class": "auto"})
-    assert inv(client, A)["unexplained"] == 0
-    d = tx(client, kind="income", account_id=A, amount=10, pr_class="returns")
-    assert inv(client, A)["returns"] == 35 and d["pr_class"] == "returns"
+    assert (x["returns"], x["unexplained"], x["correction_count"]) == (100, -15, 1)
+    client.put(f"/api/transactions/{cor['id']}", json={"pr_class": "principal"})
+    assert (inv(client, A)["principal"], inv(client, A)["returns"]) == (1070, 60)
+    d = tx(client, kind="income", account_id=A, amount=10, pr_class="other")  # old name -> unexplained
+    assert d["pr_class"] == "unexplained" and inv(client, A)["unexplained"] == -5
     assert client.post("/api/transactions", json={"kind": "income", "account_id": A, "amount": 1, "pr_class": "bogus"}).status_code == 400
     # opening split: 200 of the 1000 opening balance were prior returns
     client.put(f"/api/accounts/{A}", json={"opening_returns": 200})
     x = inv(client, A)
-    assert (x["principal"], x["returns"], x["unexplained"]) == (830, 235, 0)
+    assert (x["principal"], x["returns"], x["unexplained"]) == (870, 260, -5)
+    assert x["returns_pct"] == round(260 / 870 * 100, 2)  # explicit returns only
 
 
-def test_first_unclassified_record_hint_and_reconciliation_gap(client):
-    r = client.post("/api/accounts", json={"name": "Imported Fund", "type": "brokerage", "currency": "USD"}).json()
-    A = r["id"]
+def test_imported_first_record_and_reconciliation_diff(client):
+    A = client.post("/api/accounts", json={"name": "Imported Fund", "type": "brokerage", "currency": "USD"}).json()["id"]
     first = tx(client, kind="adjustment", account_id=A, amount=5000, date="2026-01-05")  # imported starting balance
-    tx(client, kind="adjustment", account_id=A, amount=250, date="2026-02-05")
+    tx(client, kind="adjustment", account_id=A, amount=250, date="2026-02-05", adj_reason="investment_gain")
     h = client.get(f"/api/accounts/{A}/history?period=ALL").json()["invest"]
-    assert (h["principal"], h["returns"], h["likely_opening_count"], h["likely_opening_amount"]) == (0, 5250, 1, 5000)
+    assert (h["principal"], h["returns"], h["unexplained"], h["likely_opening_count"]) == (0, 250, 5000, 1)
     client.put(f"/api/transactions/{first['id']}", json={"adj_reason": "opening"})  # what Reclassify would do
     h = client.get(f"/api/accounts/{A}/history?period=ALL").json()["invest"]
-    assert (h["principal"], h["returns"], h["likely_opening_count"]) == (5000, 250, 0)
-    # a reconciliation checkpoint that differs from the ledger is a genuine gap -> unexplained
+    assert (h["principal"], h["returns"], h["unexplained"], h["likely_opening_count"]) == (5000, 250, 0, 0)
     rr = client.post(f"/api/accounts/{A}/reconcile", json={"balance": 5300, "as_of": "2026-03-01", "accept": True})
     assert rr.status_code == 200, rr.text
     x = inv(client, A)
-    assert x["value"] == 5300 and x["unexplained"] == 50
+    assert (x["value"], x["unexplained"], x["unclassified"], x["reconciliation_diff"]) == (5300, 50, 0, 50)
+    # tree group totals carry the split too
+    g = next(n for n in client.get("/api/accounts").json()["tree"] if n.get("invest"))
+    assert g["invest"]["unexplained"] == 50 and g["invest"]["reconciliation_diff"] == 50
+    # series: value = principal + returns + unexplained at every point
+    sr = client.get(f"/api/accounts/{A}/investment-series?from=2026-01-01&to=2026-03-31").json()
+    assert all(abs(p["value"] - p["principal"] - p["returns"] - p["unexplained"]) < 0.01 for p in sr["points"])
+    assert sr["points"][-1]["unexplained"] == 50 and "end_unexplained" in sr["summary"]
 
 
 def test_trades_dividends_period_and_chart(client):

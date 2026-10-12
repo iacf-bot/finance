@@ -459,51 +459,60 @@ Compare an account with a bank/card statement and lock the balance at that date.
     It returns items with `running_balance`/`running_shown`/`account_effect`, plus `balances` {opening, closing, inflow, outflow}.
   * New indexes: `transactions(date,id)`, `(account_id,date,id)` and `(to_account_id,date,id)`.
 
-## Principal 本金投入 vs returns 投资收益 (investment accounts)
+## Principal 本金投入 vs returns 投资收益 vs unexplained 未分类 (investment accounts)
 
-Investment-type accounts (brokerage, retirement 401k/IRA, crypto) split their value into **principal** (net
-contributions) and **returns**.
+Investment-type accounts (brokerage, retirement 401k/IRA, crypto) split their value into three parts:
+**value 市值 = principal 本金 + returns 收益 + unexplained 未分类**.
 
-* **Principal** = opening balance (minus the part marked as prior returns) + transfers in − transfers out +
-  income deposited (payroll contributions; an employer match counts as a contribution and is labelled
-  *Employer match 雇主匹配*) + refunds − withdrawals/expenses + adjustments with reason *Opening balance* or
-  *Unrecorded income/spending*. A transfer between two investment accounts moves principal from one to the other.
-* **Returns** = prior returns in the opening balance + adjustments with reason *Investment gain/loss*, *Interest*
-  or *Fees* (negative) + **unclassified balance adjustments** (*Correction/other* or no reason, e.g. imported
-  余额变更: on an investment account a balance change is a gain/loss) + dividends − investment fees + income in an interest/dividend category + trade gains on
-  holdings (realized + unrealized = market value − buys + sells).
-* **Current value 当前市值** = the account balance (cash + holdings at market value). If it is not equal to
-  principal + returns, the **unexplained difference 未解释差额** is shown. It only comes from genuine gaps:
-  reconciliation differences and transactions you marked *Other*.
-  * If an account's **first** record is an unclassified adjustment (an export usually has no opening balance), it
-    counts as returns. The account page shows a hint with a button that opens **🏷 Reclassify** for that account,
-    so you can mark it as *Opening balance* (principal).
-  * This is computation only: no data is changed.
-* **Overrides:** the transaction form has *Investment: counts as 计入* (Auto / Principal / Returns / Other).
-  The account form has *Prior returns in opening balance* (default 0, so the whole opening balance is principal).
+* **Principal** = net contributions:
+  * opening balance (minus the part marked as prior returns)
+  * transfers in − transfers out (a transfer between two investment accounts moves principal from one to the
+    other)
+  * income deposited (payroll contributions; an employer match counts as a contribution and is labelled
+    *Employer match 雇主匹配*)
+  * refunds − withdrawals/expenses
+  * adjustments with reason *Opening balance* or *Unrecorded income/spending*
+* **Returns** = explicit returns only:
+  * prior returns in the opening balance
+  * adjustments with reason *Investment gain/loss*, *Interest* or *Fees* (negative)
+  * dividends − investment fees
+  * income in an interest/dividend category
+  * trade gains on holdings (realized + unrealized = market value − buys + sells)
+* **Unexplained 未分类** has two parts:
+  * `unclassified`: balance adjustments with reason *Correction/other* or no reason, e.g. imported 随手记 余额变更.
+  * `reconciliation_diff`: whatever else the ledger doesn't explain (reconciliation checkpoint jumps).
+
+  `unexplained` = `unclassified` + `reconciliation_diff`. Unclassified adjustments are not counted as returns.
+  Use **🏷 Reclassify** (the button on the account's Unexplained card opens it for that account) to give them a
+  reason. This is computation only: nothing is changed in the data.
+* **Return %** = returns / principal, and the period return (Modified Dietz) uses explicit returns only.
+* **Overrides:** the transaction form has *Investment: counts as 计入* (Auto / Principal / Returns / Unexplained;
+  the API also accepts `other` as an older name). The account form has *Prior returns in opening balance*
+  (default 0, so the whole opening balance is principal).
 
 **Account page:**
-* Cards: Current value, Principal and Returns (amount and % of principal).
+* Cards: Current value, Principal, Returns (amount and % of principal) and Unexplained (with a Reclassify button).
 * Period figures for the selected filter: principal start → end, contributions/withdrawals, returns, and the
   Modified Dietz return.
-* A chart of market value, cumulative principal and cumulative returns. It follows the period filter
+* A chart of market value, cumulative principal, cumulative returns and unexplained. It follows the period filter
   (1M/3M/6M/YTD/1Y/3Y/All/custom), with automatic daily/weekly/monthly granularity or a manual choice.
-* Each row has a 本金/收益/其他/交易 badge, plus running Principal and Returns columns next to the running cash
-  balance. On mobile these columns are hidden by default, with a toggle button.
+* Each row has a 本金/收益/未分类/交易 badge, plus running Principal, Returns and Unexplained columns next to the
+  running cash balance. On mobile these columns are hidden by default, with a toggle button.
 
 **Accounts page:** investment accounts and groups show
-`Principal $X · Returns +$Y (+Z%)` (toggle: *principal & returns*).
+`Principal $X · Returns +$Y (+Z%) · Unexplained $U` (Unexplained is omitted when 0; toggle: *principal &
+returns*).
 
 API:
 ```bash
 curl -s -H "$H" "$B/api/accounts"                    # accounts[].invest {value, principal, returns, returns_pct,
-                                                     #   unexplained, correction_count, ...}; tree[].invest for groups
+                                                     #   unexplained, unclassified, reconciliation_diff, correction_count, ...}; tree[].invest for groups
 curl -s -H "$H" "$B/api/accounts/7/history?period=1Y" # items[] add pr_class, pr_badge, running_principal,
-                                                     #   running_returns; first page adds invest {..., period, series}
+                                                     #   running_returns, running_unexplained; first page adds invest {..., period, series}
 curl -s -H "$H" "$B/api/accounts/7/investment-series?from=2026-01-01&to=2026-06-30&interval=week"
 #   ?period=1M|3M|6M|YTD|1Y|3Y|ALL or from/to; interval=auto|day|week|month
 #   -> {interval, points:[{date, principal, returns, value, unexplained}], summary:{start_principal, end_principal,
-#       returns_change, contributions, withdrawals, period_returns, return_pct (Modified Dietz)}}
+#       returns_change, start/end_unexplained, contributions, withdrawals, period_returns, return_pct (Modified Dietz)}}
 curl -s -H "$H" -X PUT "$B/api/transactions/123" -H 'Content-Type: application/json' -d '{"pr_class":"returns"}'
 curl -s -H "$H" -X PUT "$B/api/accounts/7" -H 'Content-Type: application/json' -d '{"opening_returns":2500}'
 ```

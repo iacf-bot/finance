@@ -120,14 +120,14 @@ VIEWS.account = async (v, rest) => {
   const rowHtml = t => `<tr data-tx="${t.id}" style="cursor:pointer"><td class="nowrap small">${esc(t.date.slice(0, 10))}<div class="muted hide-m">${esc(t.date.slice(11, 16))}</div></td>
     <td><div class="ah-det"><span class="hico-s" aria-hidden="true">${catIcon(t)}</span><div>${t.reconciled_id ? '<span class="rec-badge" title="Reconciled 已对账">✔🔒</span> ' : ''}${txDesc(t)}</div></div></td>
     <td class="right nowrap ${t.account_effect < 0 ? 'neg' : t.account_effect > 0 ? 'pos' : ''}">${t.account_effect > 0 ? '+' : t.account_effect < 0 ? '−' : ''}${money(Math.abs(t.account_effect), A ? A.currency : undefined)}${t.pr_badge ? `<div><span class="pr-badge pr-${t.pr_class}" title="${esc(t.pr_label || '')}">${t.pr_badge}</span></div>` : ''}</td>
-    <td class="right nowrap rb">${t.running_shown === null || t.running_shown === undefined ? '—' : money(t.running_shown, A ? A.currency : undefined)}</td>${A && A.is_investment ? `<td class="right nowrap prc">${t.running_principal === undefined ? '—' : money(t.running_principal, A.currency)}</td><td class="right nowrap prc">${t.running_returns === undefined ? '—' : money(t.running_returns, A.currency)}</td>` : ''}</tr>`;
+    <td class="right nowrap rb">${t.running_shown === null || t.running_shown === undefined ? '—' : money(t.running_shown, A ? A.currency : undefined)}</td>${A && A.is_investment ? `<td class="right nowrap prc">${t.running_principal === undefined ? '—' : money(t.running_principal, A.currency)}</td><td class="right nowrap prc">${t.running_returns === undefined ? '—' : money(t.running_returns, A.currency)}</td><td class="right nowrap prc">${t.running_unexplained === undefined ? '—' : money(t.running_unexplained, A.currency)}</td>` : ''}</tr>`;
   const NEXT = {'1M': '3M', '3M': '6M', '6M': '1Y', '1Y': '3Y', '3Y': 'ALL', 'YTD': 'ALL', 'CUSTOM': 'ALL'};
   const inf = infiniteList(list, {
     load: cursor => { const p = params(); if (cursor) p.set('before', cursor); return api(`/api/accounts/${id}/history?` + p); },
     append: (h, first) => {
       if (first) {
         head(h);
-        list.innerHTML = h.items.length ? `<div class="scroll-x"><table class="t ah-table"><thead><tr><th>Date</th><th>Details</th><th class="right">Amount</th><th class="right">${balHdr()}</th>${A && A.is_investment ? '<th class="right prc">Principal 本金</th><th class="right prc">Returns 收益</th>' : ''}</tr></thead><tbody id="ahBody"></tbody></table></div>`
+        list.innerHTML = h.items.length ? `<div class="scroll-x"><table class="t ah-table"><thead><tr><th>Date</th><th>Details</th><th class="right">Amount</th><th class="right">${balHdr()}</th>${A && A.is_investment ? '<th class="right prc">Principal 本金</th><th class="right prc">Returns 收益</th><th class="right prc">Unexplained 未分类</th>' : ''}</tr></thead><tbody id="ahBody"></tbody></table></div>`
           : `<div class="empty">No transactions in this period${st.q || st.category_id ? ' matching the filter' : ''}.</div>`;
       }
       if (h.items.length) { $('#ahBody').insertAdjacentHTML('beforeend', h.items.map(rowHtml).join('')); bindTxRows(list, after); }
@@ -148,35 +148,38 @@ function invSection(h, a, id) {
       <div class="ic"><div class="lbl">Current value 当前市值</div><div class="val">${money(x.value, cur)}</div></div>
       <div class="ic"><div class="lbl">Principal 本金投入</div><div class="val">${money(x.principal, cur)}</div><div class="small muted">net contributions 净投入</div></div>
       <div class="ic"><div class="lbl">Returns 投资收益</div><div class="val ${x.returns < 0 ? 'neg' : x.returns > 0 ? 'pos' : ''}">${sgn(x.returns, cur)}</div><div class="small ${x.returns < 0 ? 'neg' : 'pos'}">${pctS(x.returns_pct)} of principal</div></div>
+      <div class="ic${Math.abs(x.unexplained) >= 0.01 ? ' unexp' : ''}"><div class="lbl">Unexplained 未分类</div><div class="val">${sgn(x.unexplained, cur)}</div><div class="small muted">${x.correction_count ? `${x.correction_count} unclassified adj. ${money(x.unclassified, cur)}` : 'no unclassified adjustments'}${Math.abs(x.reconciliation_diff) >= 0.01 ? ` · reconciliation diff ${money(x.reconciliation_diff, cur)}` : ''}</div>
+        ${x.correction_count ? '<button class="btn sm" id="ahReclass" style="margin-top:6px">🏷 Reclassify 重新分类…</button>' : ''}</div>
     </div>
-    ${Math.abs(x.unexplained) >= 0.01 ? `<div class="small inv-unexp">Unexplained difference 未解释差额 <b>${sgn(x.unexplained, cur)}</b> — value ≠ principal + returns${x.unclassified_corrections ? ` (${money(x.unclassified_corrections, cur)} from transactions marked Other 其他; the rest from reconciliation differences)` : ' (from reconciliation differences)'}.</div>` : ''}
-    ${x.likely_opening_count ? `<div class="inv-hint">💡 This account's first record (${money(x.likely_opening_amount, cur)}) is an unclassified balance adjustment, so it counts as returns. If it was really the starting balance, mark it as <i>Opening balance</i> so it counts as principal. <button class="btn sm" id="ahReclass">🏷 Reclassify 重新分类…</button></div>` : ''}
+    <div class="small muted" style="margin-top:6px">Value 市值 = principal 本金 + returns 收益 + unexplained 未分类. Unclassified balance adjustments (Correction/other, e.g. imported 余额变更) stay unexplained until you reclassify them${x.likely_opening_count ? ` — the first record (${money(x.likely_opening_amount, cur)}) is probably the opening balance` : ''}.</div>
     ${x.opening_returns ? `<div class="small muted">Opening balance ${money(x.opening_total, cur)}: ${money(x.opening_total - x.opening_returns, cur)} principal + ${money(x.opening_returns, cur)} prior returns.</div>` : ''}
     <div class="inv-period small" id="ahInvSum"></div>
     <div class="row inv-ctl"><b class="small">Principal vs value 本金 vs 市值</b><span class="sp"></span>
       <label class="small muted">Granularity <select id="ahIv" style="width:auto"><option value="auto">Auto</option><option value="day">Daily 日</option><option value="week">Weekly 周</option><option value="month">Monthly 月</option></select></label></div>
     <div style="height:240px"><canvas id="ahInvChart"></canvas></div>
-    <div class="small muted" style="margin-top:6px">Gap between value and principal = returns (+ any unexplained difference). Click legend items to hide/show lines. ${esc(x.running_note || '')}</div>
+    <div class="small muted" style="margin-top:6px">Value = principal + returns + unexplained. Click legend items to hide/show lines. ${esc(x.running_note || '')}</div>
   </div>`;
   if ($('#ahReclass')) $('#ahReclass').onclick = () => reclassifyTool(false, [id]);
   const L = $('#ahList'), key = 'ahShowPR';
   L.classList.toggle('show-pr', localStorage.getItem(key) === '1');
-  $('#ahSum').insertAdjacentHTML('beforeend', `<button type="button" class="btn sm pr-tog" id="ahPrTog">${L.classList.contains('show-pr') ? 'Hide' : 'Show'} 本金/收益 columns</button>`);
-  $('#ahPrTog').onclick = e => { const on = L.classList.toggle('show-pr'); localStorage.setItem(key, on ? '1' : '0'); e.target.textContent = `${on ? 'Hide' : 'Show'} 本金/收益 columns`; };
+  $('#ahSum').insertAdjacentHTML('beforeend', `<button type="button" class="btn sm pr-tog" id="ahPrTog">${L.classList.contains('show-pr') ? 'Hide' : 'Show'} 本金/收益/未分类 columns</button>`);
+  $('#ahPrTog').onclick = e => { const on = L.classList.toggle('show-pr'); localStorage.setItem(key, on ? '1' : '0'); e.target.textContent = `${on ? 'Hide' : 'Show'} 本金/收益/未分类 columns`; };
   const draw = sr => {
     const s = sr.summary, P = sr.points;
     $('#ahInvSum').innerHTML = `<span>${esc(sr.from)} – ${esc(sr.to)}</span>
       <span>Principal 本金 <b>${money(s.start_principal, cur)}</b> → <b>${money(s.end_principal, cur)}</b></span>
       <span>Contributions 投入 <b class="pos">+${num(s.contributions)}</b>${s.withdrawals ? ` · withdrawals 取出 <b class="neg">−${num(s.withdrawals)}</b>` : ''}</span>
       <span>Returns 收益 <b class="${s.period_returns < 0 ? 'neg' : 'pos'}">${sgn(s.period_returns, cur)}</b> (cumulative ${money(s.start_returns, cur)} → ${money(s.end_returns, cur)})</span>
-      <span>Return 收益率 <b>${pctS(s.return_pct)}</b> <span class="muted">Modified Dietz</span></span>`;
+      ${s.start_unexplained || s.end_unexplained ? `<span>Unexplained 未分类 ${money(s.start_unexplained, cur)} → ${money(s.end_unexplained, cur)}</span>` : ''}
+      <span>Return 收益率 <b>${pctS(s.return_pct)}</b> <span class="muted">Modified Dietz, explicit returns only</span></span>`;
     const pr = P.length > 60 ? 0 : 2;
     chart('ahInvChart', {type: 'line', data: {labels: P.map(q => q.date), datasets: [
       {label: 'Market value 市值', data: P.map(q => q.value), borderColor: '#3a7bd5', backgroundColor: 'rgba(58,123,213,.10)', fill: '+1', tension: .2, pointRadius: pr},
       {label: 'Principal 本金', data: P.map(q => q.principal), borderColor: '#9aa3b2', backgroundColor: 'rgba(154,163,178,.15)', fill: 'origin', stepped: true, pointRadius: 0},
-      {label: 'Returns 收益', data: P.map(q => q.returns), borderColor: '#14a06f', borderDash: [5, 4], fill: false, tension: .2, pointRadius: pr}]},
+      {label: 'Returns 收益', data: P.map(q => q.returns), borderColor: '#14a06f', borderDash: [5, 4], fill: false, tension: .2, pointRadius: pr},
+      {label: 'Unexplained 未分类', data: P.map(q => q.unexplained), borderColor: '#d98c00', borderDash: [2, 3], fill: false, tension: .2, pointRadius: 0}]},
       options: {interaction: {mode: 'index', intersect: false}, scales: {x: {ticks: {maxTicksLimit: 8}}},
-        plugins: {tooltip: {callbacks: {label: c => `${c.dataset.label}: ${money(c.parsed.y, cur)}`, footer: items => { const q = P[items[0].dataIndex]; return Math.abs(q.unexplained) >= 0.01 ? `Unexplained 未解释: ${money(q.unexplained, cur)}` : ''; }}}}}});
+        plugins: {tooltip: {callbacks: {label: c => `${c.dataset.label}: ${money(c.parsed.y, cur)}`}}}}});
   };
   draw(x.series);
   $('#ahIv').value = 'auto';
