@@ -10,7 +10,14 @@ if [[ -f $PIDFILE ]] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
   echo "Already running (pid $(cat $PIDFILE))"; exit 0
 fi
 if [[ ! -x .venv/bin/python ]]; then
-  python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
+  python3 -m venv .venv
+fi
+# install packages added to requirements.txt since the last start (e.g. after git pull / unpacking an update)
+want=$(sha256sum requirements.txt | cut -d' ' -f1)
+if [[ "$(cat .venv/requirements.sha256 2>/dev/null)" != "$want" ]]; then
+  echo "requirements.txt changed: installing packages ..."
+  if .venv/bin/pip install -q -r requirements.txt; then echo "$want" > .venv/requirements.sha256
+  else echo "WARNING: pip install failed; some features (e.g. receipt photos) may not work"; fi
 fi
 # optional settings: HOST, PORT, DATA_DIR, TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS (legacy FINANCE_HOSTS/FINANCE_PORT also work)
 if [[ -f .env ]]; then set -a; . ./.env; set +a; fi

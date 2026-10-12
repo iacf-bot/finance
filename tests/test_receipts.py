@@ -138,3 +138,73 @@ def test_backup_includes_receipts(client, db, monkeypatch):
     backup.make_backup(db, "test")
     rel = db.one("SELECT rel_path FROM receipts WHERE id=?", (rid,))["rel_path"]
     assert (Path(db.path).parent / "backups" / "receipts" / rel).exists()
+
+
+# ---- upload shapes iPhone Shortcuts / browsers actually send (any field name, raw body, no filename, base64 text)
+def _shapes(img):
+    b64 = base64.b64encode(img).decode()
+    B = "ShortcutBoundary"
+    nofn = (f"--{B}\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\n").encode() + img + \
+           f"\r\n--{B}\r\nContent-Disposition: form-data; name=\"auto_post\"\r\n\r\nfalse\r\n--{B}--\r\n".encode()
+    return [
+        ("any field name, octet-stream", dict(files={"Photo 1": ("IMG_0001", img, "application/octet-stream")})),
+        ("part without filename", dict(content=nofn, headers={"Content-Type": f"multipart/form-data; boundary={B}"})),
+        ("raw image/jpeg body", dict(content=img, headers={"Content-Type": "image/jpeg"})),
+        ("raw octet-stream body", dict(content=img, headers={"Content-Type": "application/octet-stream"})),
+        ("base64 text form field", dict(data={"file": b64})),
+        ("json any key", dict(json={"photo": "data:image/jpeg;base64," + b64})),
+        ("text/plain base64 body", dict(content=b64.encode(), headers={"Content-Type": "text/plain"})),
+    ]
+
+
+def test_upload_accepts_every_shape(client):
+    img = receipt(EN_LINES)
+    for label, kw in _shapes(img):
+        r = client.post("/api/receipts", **kw)
+        assert r.status_code == 200, (label, r.text)
+        j = r.json()
+        assert j["status"] == "draft" and j["receipt_ids"] and j["message"], label
+
+
+def test_upload_errors_have_message(client):
+    r = client.post("/api/receipts", content=b"%PDF-1.4 not an image" * 100, headers={"Content-Type": "application/pdf"})
+    assert r.status_code == 400 and r.json()["message"].startswith("Receipt not saved") and "supported image" in r.json()["message"]
+    r = client.post("/api/receipts")
+    assert r.status_code == 400 and "No image received" in r.json()["message"]
+    r = client.post("/api/receipts", content=b"{bad json", headers={"Content-Type": "application/json"})
+    assert r.status_code == 400 and r.json()["message"]
+    r = client.post("/api/receipts", json={"image": "!!!not-base64!!!" * 10})
+    assert r.status_code == 400 and "base64" in r.json()["message"]
+
+
+def test_heic_raw_body(client):
+    pytest.importorskip("pillow_heif")
+    from PIL import Image
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    buf = io.BytesIO()
+    Image.open(io.BytesIO(receipt(EN_LINES))).save(buf, "HEIF")
+    r = client.post("/api/receipts", content=buf.getvalue())  # no content type at all
+    assert r.status_code == 200, r.text
+    assert r.json()["receipts"][0]["rel_path"].endswith(".jpg")
+
+
+def test_without_pillow_photo_is_still_saved(client, monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def fake(name, *a, **k):
+        if name.split(".")[0] in ("PIL", "pytesseract", "pillow_heif"):
+            raise ImportError(name)
+        return real(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", fake)
+    img = receipt(EN_LINES)
+    r = client.post("/api/receipts?auto_post=true", files={"file": ("r.jpg", img, "image/jpeg")})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["status"] == "review" and j["receipt_ids"] and "OCR off" in j["message"]
+    rid = j["receipt_ids"][0]
+    assert client.get(f"/api/receipts/{rid}/image").content == img
+    assert client.get(f"/api/receipts/{rid}/image?thumb=1").status_code == 200
+    r = client.post("/api/receipts", content=b"x" * 5000, headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 400 and "supported image" in r.json()["message"]

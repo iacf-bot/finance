@@ -616,10 +616,21 @@ API:
    - URL: `http://<your-server>:8088/api/receipts?auto_post=true`
    - Method: POST
    - Headers: `X-API-Key: <your key>`
-   - Request Body: **Form**, with a field `file` of type **File** set to the photo.
+   - Request Body: **File** set to the photo (simplest), or **Form** with a field of type **File** (any field name).
 3. **Get Dictionary Value** `message`, then **Show Notification** (or **Speak Text**). You'll see something like "Saved: TEST MART $11.10" or "To review: …".
 
 Leave out `auto_post=true` to get a draft only. To send base64 JSON instead, use **Base64 Encode** → JSON body `{"image": <Base64>}`.
+
+The server recognises the image by its bytes. It accepts any form field name, a missing filename or content type,
+`application/octet-stream`, a raw body, base64 text (form, JSON or plain), and JPEG/PNG/WebP/HEIC. Errors come back as
+`{"ok": false, "message": "Receipt not saved: …"}`, so the notification says what went wrong.
+
+**Troubleshooting:**
+- An updated install that was started without re-running setup used to miss the new packages (Pillow / pytesseract /
+  pillow-heif), and every upload failed. `start.bat` / `start.sh` now install them automatically when
+  `requirements.txt` changes. Without Pillow, photos are still saved, just not read.
+- `GET /api/receipts/status` (with the API key) shows whether OCR is available. The web 📷 flow also shows a warning when it is off.
+- Every upload is logged in `data/logs/server.log` as `receipt upload: … bytes`.
 
 ## Reminder Center 提醒中心
 

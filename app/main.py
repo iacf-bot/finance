@@ -734,39 +734,33 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                 "pattern": db.get_setting("receipts_pattern") or receipts.DEFAULT_PATTERN,
                 "max_mb": receipts.MAX_BYTES // 1024 // 1024, "max_files": receipts.MAX_FILES}
 
+    def _rc_err(code: int, msg: str):
+        log.warning("receipt upload rejected (%s): %s", code, msg)
+        return JSONResponse({"ok": False, "detail": msg, "message": "Receipt not saved: " + msg}, status_code=code)
+
     @app.post("/api/receipts")
     async def upload_receipts(request: Request, auto_post: bool = False, account_id: int | None = None,
                               ledger_id: int | None = None):
         """Multipart (file / files fields) or JSON {image|images: base64, filename?, auto_post?, account_id?}.
         auto_post=false (default): returns a draft for the form; nothing is recorded. auto_post=true: records the
         transaction (posted if confident, else To review) with the image(s) attached."""
-        items = []
         ctype = request.headers.get("content-type", "")
-        if ctype.startswith("multipart/"):
-            form = await request.form()
-            for k in ("file", "files", "files[]", "image", "photo"):
-                for f in form.getlist(k):
-                    if hasattr(f, "read"):
-                        items.append((await f.read(receipts.MAX_BYTES + 1), f.filename or ""))
-            auto_post = auto_post or str(form.get("auto_post") or "").lower() in ("1", "true", "yes", "on")
-            account_id = account_id or (int(form.get("account_id")) if str(form.get("account_id") or "").isdigit() else None)
-        else:
-            try:
-                body = await request.json()
-            except Exception:  # noqa: BLE001
-                raise HTTPException(400, "Send multipart/form-data with a 'file' field, or JSON {\"image\": \"<base64>\"}")
-            imgs = body.get("images") or ([body["image"]] if body.get("image") else [])
-            try:
-                items = [(receipts.decode_b64(b), body.get("filename") or "") for b in imgs]
-            except receipts.ReceiptError as e:
-                raise HTTPException(400, str(e))
-            auto_post = auto_post or str(body.get("auto_post") or "").lower() in ("1", "true", "yes")
-            account_id = account_id or body.get("account_id")
-            ledger_id = ledger_id or body.get("ledger_id")
+        raw = await request.body()
+        if len(raw) > receipts.MAX_BYTES * receipts.MAX_FILES + 1024 * 1024:
+            return _rc_err(413, f"Upload too large (max {receipts.MAX_BYTES // 1024 // 1024} MB per image)")
+        try:
+            items, params = receipts.extract_upload(raw, ctype)
+        except receipts.ReceiptError as e:
+            return _rc_err(400, str(e))
+        truthy = lambda v: str(v or "").lower() in ("1", "true", "yes", "on")
+        auto_post = auto_post or truthy(params.get("auto_post"))
+        account_id = account_id or (int(params["account_id"]) if str(params.get("account_id") or "").isdigit() else None)
+        ledger_id = ledger_id or (int(params["ledger_id"]) if str(params.get("ledger_id") or "").isdigit() else None)
+        log.info("receipt upload: %d bytes, content-type %r, %d image(s), auto_post=%s", len(raw), ctype[:60], len(items), auto_post)
         if not items:
-            raise HTTPException(400, "No image received (field 'file')")
+            return _rc_err(400, "No image received. Send the photo as the request body or as a form file (any field name).")
         if len(items) > receipts.MAX_FILES:
-            raise HTTPException(400, f"Too many images (max {receipts.MAX_FILES})")
+            return _rc_err(400, f"Too many images (max {receipts.MAX_FILES})")
         receipts.cleanup_drafts(db)
         saved = []
         try:
@@ -775,7 +769,12 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         except receipts.ReceiptError as e:
             for r in saved:
                 receipts.delete(db, r["id"])
-            raise HTTPException(400, str(e))
+            return _rc_err(400, str(e))
+        except Exception as e:  # noqa: BLE001 - always answer Shortcuts with a readable message
+            log.exception("receipt upload failed")
+            for r in saved:
+                receipts.delete(db, r["id"])
+            return _rc_err(500, f"Receipt processing failed: {e}")
         # several photos of one receipt: the first with a readable total wins, the rest fill gaps
         parsed = {}
         for r in saved:
@@ -807,6 +806,8 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             out["status"] = "draft"
         zh = bool(re.search(r"[\u3400-\u9fff]", out["ocr_text"] or "")) and not re.search(r"[A-Za-z]{4,}", (out["draft"].get("merchant") or ""))
         out["message"] = ingest.receipt_message(out, zh)
+        if not out["ocr"].get("available"):
+            out["message"] += " · OCR off on the server: " + out["ocr"].get("message", "")[:120]
         return out
 
     @app.get("/api/receipts/{rid}")
