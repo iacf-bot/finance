@@ -225,3 +225,6 @@ table.upcoming td{padding:5px 6px}
 .rb-bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .rb-links{font-size:12px;color:#666}
 .rb-bar{padding-right:84px}
+.pr-table tr.pr-acc{cursor:pointer}.pr-table tr.pr-acc:hover{background:var(--hover,#f4f6fa)}
+.pr-table tr.ret-cur td{border-top:1px dashed #d8dce4}
+#prCard h3 .chips{display:inline-flex;flex-wrap:wrap;gap:4px}

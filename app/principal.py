@@ -227,7 +227,7 @@ def period_figures(db: Database, acct: dict, w: dict, start: str | None, end: st
             "end_value": R(v1), "contributions": R(contrib), "withdrawals": R(withdraw), "net_contributions": R(net),
             "returns": R(period_returns), "trade_gains": R(market), "unexplained": R(other + c["components"]["reconciliation"]),
             "unclassified": R(other), "reconciliation_diff": R(c["components"]["reconciliation"]),
-            "md_return": round(md * 100, 2) if md is not None else None}
+            "md_return": round(md * 100, 2) if md is not None else None, "md_denominator": denom}
 
 
 def history_extras(db: Database, acct: dict, page_items: list[dict], start, end, first_page: bool,
@@ -333,3 +333,129 @@ def investment_series(db: Database, acct: dict, start=None, end=None, interval: 
             "return_pct": pf["md_return"]}
     return {"account_id": acct["id"], "currency": acct["currency"], "from": s.isoformat(), "to": e.isoformat(),
             "interval": iv, "points": out, "summary": summ}
+
+
+# ---------------------------------------------------------------- portfolio (Investments page)
+def _full_accounts(db: Database, ids: list[int] | None = None) -> list[dict]:
+    from . import ledger
+    accts = [a for a in ledger.accounts_with_balances(db) if a["is_investment"] and (ids is None or a["id"] in ids)]
+    orr = {r["id"]: r for r in db.all("SELECT a.id, a.opening_returns, a.group_id, g.name group_name, g.sort gsort, a.sort "
+                                     "FROM accounts a LEFT JOIN account_groups g ON g.id=a.group_id")}
+    for a in accts:
+        o = orr.get(a["id"], {})
+        a.update(opening_returns=o.get("opening_returns"), group_id=o.get("group_id"),
+                 group_name=o.get("group_name") or "Ungrouped 未分组", gsort=o.get("gsort"))
+    return accts
+
+
+PERIOD_KEYS = ("contributions", "withdrawals", "net_contributions", "returns", "trade_gains", "unexplained",
+               "unclassified", "reconciliation_diff", "start_value", "end_value")
+
+
+def combine_periods(parts: list[tuple[dict, float]], base: str) -> dict:
+    """Sum per-account period_figures (each with a conversion factor to `base`) into one block (same definitions)."""
+    s = defaultdict(float)
+    denom = 0.0
+    for pf, f in parts:
+        for k in PERIOD_KEYS:
+            s[k] += (pf.get(k) or 0) * f
+        denom += (pf.get("md_denominator") or 0) * f
+    R = lambda v: round(v, 2) + 0.0
+    out = {"currency": base, **{k: R(v) for k, v in s.items()}}
+    out["md_return"] = round(s["returns"] / denom * 100, 2) if denom > 1e-9 else None
+    return out
+
+
+def period_for_ids(db: Database, ids: list[int], start, end, base: str, cache: dict | None = None,
+                   today: date | None = None) -> dict:
+    """Principal/returns period figures for a set of investment accounts, in `base` (same logic as account pages).
+    Transfers between the accounts cancel out (principal leaves one and enters the other)."""
+    rates = fx_rates(db)
+    cache = cache if cache is not None else {}
+    parts = []
+    for a in _full_accounts(db, ids) if not all(i in cache for i in ids) else [cache[i][0] for i in ids]:
+        if a["id"] not in cache:
+            cache[a["id"]] = (a, walk(db, a))
+        acct, w = cache[a["id"]]
+        pf = period_figures(db, acct, w, start, end, today)
+        parts.append((pf, convert(1.0, acct["currency"], base, rates)))
+    return combine_periods(parts, base)
+
+
+def portfolio(db: Database, start=None, end=None, interval: str = "auto", today: date | None = None,
+              include_archived: bool = False) -> dict:
+    """Per-account principal / returns / unexplained table for the Investments page: figures as of the end of the
+    range (= the account page header when the range ends today) + period changes, group subtotals (base currency),
+    totals by currency and overall, and a combined principal-vs-returns series (base currency)."""
+    from . import returns as rt
+    today = today or date.today()
+    base = db.get_setting("base_currency", "USD")
+    rates = fx_rates(db)
+    accts = _full_accounts(db)
+    ids = [a["id"] for a in accts]
+    first = rt.first_activity(db, ids)
+    s = rt._d(start) if start else (rt._d(first) if first else today)
+    e = rt._d(end) if end else today
+    if s > e:
+        s = e
+    iv, _ = series_points(s, e, interval)
+    R = lambda v: round(v, 2) + 0.0
+    rows, comb = [], {}
+    groups: dict = {}
+    by_cur: dict = defaultdict(lambda: defaultdict(float))
+    for a in sorted(accts, key=lambda a: (a.get("gsort") is None, a.get("gsort") or 0, a["group_name"], a.get("sort") or 0, a["name"])):
+        w = walk(db, a)
+        ser = investment_series(db, a, s.isoformat(), e.isoformat(), iv, today, w)
+        last = ser["points"][-1] if ser["points"] else {}
+        cur_sum = summary(a, w)
+        pf = period_figures(db, a, w, s.isoformat(), e.isoformat(), today)
+        empty = not any(abs(last.get(k) or 0) >= 0.005 for k in ("value", "principal", "returns", "unexplained"))
+        if a["archived"] and empty and not include_archived:
+            continue
+        f = convert(1.0, a["currency"], base, rates)
+        p, r = last.get("principal") or 0.0, last.get("returns") or 0.0
+        row = {"id": a["id"], "name": a["name"], "type": a["type"], "currency": a["currency"], "archived": a["archived"],
+               "group_id": a["group_id"], "group_name": a["group_name"],
+               "value": last.get("value", 0.0), "principal": p, "returns": r,
+               "returns_pct": round(r / p * 100, 2) if p > 0.005 else None, "unexplained": last.get("unexplained", 0.0),
+               "unclassified": cur_sum["unclassified"], "reconciliation_diff": cur_sum["reconciliation_diff"],
+               "correction_count": correction_counts(db, [a["id"]]).get(a["id"], 0),
+               "period": {k: pf[k] for k in ("contributions", "withdrawals", "net_contributions", "returns",
+                                             "unexplained", "md_return")},
+               "principal_change": ser["summary"]["principal_change"], "returns_change": ser["summary"]["returns_change"],
+               "factor": f}
+        rows.append(row)
+        g = groups.setdefault(a["group_id"], {"id": a["group_id"], "name": a["group_name"], "account_ids": [], "_p": [], "s": defaultdict(float)})
+        g["account_ids"].append(a["id"]); g["_p"].append((pf, f))
+        for k in ("value", "principal", "returns", "unexplained", "principal_change", "returns_change"):
+            g["s"][k] += row[k] * f
+            by_cur[a["currency"]][k] += row[k]
+        for pt in ser["points"]:
+            c = comb.setdefault(pt["date"], defaultdict(float))
+            for k in ("principal", "returns", "value", "unexplained"):
+                c[k] += pt[k] * f
+
+    def block(sm, parts):
+        out = {k: R(v) for k, v in sm.items()}
+        out["returns_pct"] = round(sm["returns"] / sm["principal"] * 100, 2) if sm["principal"] > 0.005 else None
+        out["period"] = {k: v for k, v in combine_periods(parts, base).items() if k in
+                         ("contributions", "withdrawals", "net_contributions", "returns", "unexplained", "md_return")}
+        return out
+    glist, tot, allp = [], defaultdict(float), []
+    for g in groups.values():
+        glist.append({"id": g["id"], "name": g["name"], "account_ids": g["account_ids"], "currency": base, **block(g["s"], g["_p"])})
+        for k, v in g["s"].items():
+            tot[k] += v
+        allp += g["_p"]
+    for r in rows:
+        r.pop("factor")
+    curs = []
+    for c, sm in sorted(by_cur.items()):
+        curs.append({"currency": c, **{k: R(v) for k, v in sm.items()},
+                     "returns_pct": round(sm["returns"] / sm["principal"] * 100, 2) if sm["principal"] > 0.005 else None})
+    for k in ("value", "principal", "returns", "unexplained", "principal_change", "returns_change"):
+        tot.setdefault(k, 0.0)
+    series = [{"date": d, **{k: R(v) for k, v in c.items()}} for d, c in sorted(comb.items())]
+    return {"from": s.isoformat(), "to": e.isoformat(), "interval": iv, "currency": base, "accounts": rows,
+            "groups": glist, "by_currency": curs, "total": {"currency": base, **block(tot, allp)}, "series": series,
+            "first_date": first[:10] if first else None}

@@ -517,6 +517,20 @@ curl -s -H "$H" -X PUT "$B/api/transactions/123" -H 'Content-Type: application/j
 curl -s -H "$H" -X PUT "$B/api/accounts/7" -H 'Content-Type: application/json' -d '{"opening_returns":2500}'
 ```
 
+
+### Investments page: principal & returns 本金与收益
+- The principal / returns / unexplained summary lives on **Investments**. The Accounts tree no longer shows it, though the API still returns the `invest` fields on accounts and groups.
+- There is one row per investment account: value, principal 本金投入, returns 投资收益 (amount and % of principal), unexplained 未分类, and returns for the selected period (money-weighted %).
+- The table has group subtotals in the base currency, totals by currency, and an overall total.
+- A range filter (1M/3M/6M/YTD/1Y/3Y/All/Custom) drives a combined principal vs returns (vs value) chart. Each row opens the account detail page.
+- The figures are as of the end of the range. When the range ends today they equal the account page header.
+- `GET /api/investments/principal-returns?from=&to=&interval=auto|day|week|month&include_archived=` returns `accounts`, `groups`, `by_currency`, `total`, and `series`.
+- The **Investment returns** report uses the same logic:
+  - contributions/withdrawals are principal flows only;
+  - gain = returns;
+  - unclassified adjustments and reconciliation gaps appear in a separate `unexplained` column.
+- The old ledger-flow figures are kept as `flow_contributions`, `flow_withdrawals`, `flow_net_contributions`, `flow_gain`, `flow_md_return`, and `flow_simple_return`.
+
 ## Reimbursements 报销
 
 - Flag any **expense** as *可报销 reimbursable* (quick/detail/edit forms, or the 报销中心 page). Optional: payer 报销方, expected amount (defaults to the expense amount), note.

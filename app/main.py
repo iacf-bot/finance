@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -950,6 +950,14 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         if not db.one("SELECT 1 x FROM schedules WHERE id=?", (sid,)):
             raise HTTPException(404, "Schedule not found")
         return schedules.delete(db, sid, keep_history)
+
+    @app.get("/api/investments/principal-returns")
+    def investments_principal_returns(start: str | None = Query(None, alias="from"), end: str | None = Query(None, alias="to"),
+                                      interval: str = "auto", include_archived: bool = False):
+        try:
+            return principal.portfolio(db, start, end, interval, include_archived=include_archived)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.get("/api/investments/returns")
     def investment_returns(period: str = "ytd", start: str | None = None, end: str | None = None, scope: str = "all"):

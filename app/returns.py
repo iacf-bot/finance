@@ -270,6 +270,22 @@ def investment_accounts(db: Database) -> list[dict]:
         FROM accounts a LEFT JOIN account_groups g ON g.id=a.group_id WHERE a.type IN ({q}) ORDER BY g.sort, a.sort, a.name""")
 
 
+def _with_pr(r: dict, p: dict) -> dict:
+    """Align a compute() block with the principal/returns logic of the account pages: contributions/withdrawals are
+    principal flows only, gain = returns (recorded returns + trade gains), unclassified balance adjustments and
+    reconciliation gaps are reported separately as `unexplained` (not gain, not contributions). The ledger-flow
+    figures are kept under `flow_*`."""
+    r = dict(r)
+    for k in ("contributions", "withdrawals", "net_contributions", "gain", "md_return", "simple_return"):
+        r["flow_" + k] = r.get(k)
+    v0 = r.get("start_value") or 0
+    r.update(contributions=p["contributions"], withdrawals=p["withdrawals"], net_contributions=p["net_contributions"],
+             gain=p["returns"], returns=p["returns"], unexplained=p["unexplained"], unclassified=p["unclassified"],
+             reconciliation_diff=p["reconciliation_diff"], md_return=p["md_return"],
+             simple_return=round(p["returns"] / (v0 + p["contributions"]) * 100, 2) if v0 + p["contributions"] > 1e-9 else None)
+    return r
+
+
 def report(db: Database, period: str = "ytd", start=None, end=None, scope: str = "all", today: date | None = None) -> dict:
     """Table rows for every investment account, each group and 'All investments', plus the cumulative-gain series and
     per-year returns for `scope` ('all', 'group:<id>' or 'account:<id>')."""
@@ -278,6 +294,9 @@ def report(db: Database, period: str = "ytd", start=None, end=None, scope: str =
     all_ids = [a["id"] for a in accts]
     first = first_activity(db, all_ids)
     s, e = period_bounds(period, start, end, first, today)
+    from . import principal as pr
+    cache: dict = {}
+    P = lambda ids, a=s, b=e: pr.period_for_ids(db, ids, a.isoformat(), b.isoformat(), base, cache, today)
     rows = []
     groups: dict = defaultdict(list)
     for a in accts:
@@ -289,10 +308,10 @@ def report(db: Database, period: str = "ytd", start=None, end=None, scope: str =
             if m["archived"] and not r["start_value"] and not r["end_value"] and not r["flow_count"] and not r["gain"]:
                 continue
             rows.append({"level": "account", "id": m["id"], "name": m["name"], "type": m["type"], "group_id": gid,
-                         "account_currency": m["currency"], "archived": m["archived"], **r})
-        rows.append({"level": "group", "id": gid, "name": gname, "account_ids": ids, **compute(db, ids, s, e, base, today=today)})
+                         "account_currency": m["currency"], "archived": m["archived"], **_with_pr(r, P([m["id"]]))})
+        rows.append({"level": "group", "id": gid, "name": gname, "account_ids": ids, **_with_pr(compute(db, ids, s, e, base, today=today), P(ids))})
     total = {"level": "total", "id": None, "name": "All investments 全部投资", "account_ids": all_ids,
-             **compute(db, all_ids, s, e, base, today=today)}
+             **_with_pr(compute(db, all_ids, s, e, base, today=today), P(all_ids))}
     rows.append(total)
     # scope for chart + per-year table
     kind, _, sid = (scope or "all").partition(":")
@@ -310,7 +329,7 @@ def report(db: Database, period: str = "ytd", start=None, end=None, scope: str =
         for y in range(max(_d(sfirst).year, 1900), e.year + 1):
             ys, ye = date(y, 1, 1), min(date(y, 12, 31), e)
             ys = max(ys, _d(sfirst)) if y == _d(sfirst).year else ys
-            r = compute(db, sids, ys, ye, base, today=today)
+            r = _with_pr(compute(db, sids, ys, ye, base, today=today), P(sids, ys, ye))
             years.append({"year": y, **{k: r[k] for k in ("start", "end", "start_value", "end_value", "contributions",
                                                           "withdrawals", "net_contributions", "gain", "simple_return",
                                                           "md_return", "xirr")}})
