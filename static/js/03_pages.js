@@ -241,7 +241,10 @@ function groupsEditor(groups) {
 }
 
 /* ---------- investments ---------- */
-VIEWS.investments = async (v) => {
+VIEWS.investments = async (v, rest = []) => {
+  // #/investments/account/<id>: the account detail page, opened inside the Investments section
+  if (rest[0] === 'account') { window.scrollTo(0, 0); return VIEWS.account(v, rest.slice(1), {section: 'investments'}); }
+  if (S.invPR) S.invPR.fromList = false;
   const d = await api('/api/investments');
   const totMV = d.holdings.reduce((s, h) => s + h.market_value, 0), totCost = d.holdings.reduce((s, h) => s + h.cost, 0);
   v.innerHTML = `${demoBanner()}<div class="grid g3">
@@ -259,8 +262,9 @@ VIEWS.investments = async (v) => {
   <div class="grid g2" style="margin-top:16px"><div class="card"><h3>Investment accounts</h3>${d.accounts.map(a => `<div class="acct"><div class="nm"><b>${esc(a.name)}</b><span class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</span></div><div class="bal">${money(a.balance, a.currency)}</div></div>`).join('') || '<div class="empty">None</div>'}</div>
   <div class="card"><h3>Recent trades 交易记录</h3>${txTable(d.trades.slice(0, 20), {compact: true})}</div></div>`;
   bindTxRows(v);
-  renderPR();
-  renderReturns();
+  Promise.all([renderPR(), renderReturns()]).then(() => {  // coming back from an account: restore scroll position
+    const y = S.invPR && S.invPR.scroll; if (y && location.hash.replace(/\/$/, '') === '#/investments') { window.scrollTo(0, y); S.invPR.scroll = 0; }
+  });
   const inv = S.meta.accounts.find(a => S.meta.account_types[a.type].investment && !a.archived);
   $('#trade').onclick = () => openTx(null, null, {kind: 'buy', account_id: inv ? inv.id : ''});
   $('#refresh').onclick = async () => { const r = await guard(() => api('/api/prices/refresh', {method: 'POST'})); toast(`Updated ${Object.keys(r.updated).length}${r.failed.length ? ', failed: ' + r.failed.join(', ') : ''}`, !!r.failed.length); route(); };

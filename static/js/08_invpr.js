@@ -15,7 +15,7 @@ async function renderPR() {
   let d;
   try { d = await api('/api/investments/principal-returns?' + qs); } catch (e) { el.innerHTML = `<h3>Principal &amp; returns 本金与收益</h3><div class="neg">${esc(e.message)}</div>`; return; }
   const B = d.currency, T = d.total;
-  const accRow = a => `<tr class="pr-acc" data-acc="${a.id}" title="Open account detail 查看账户">
+  const accRow = a => `<tr class="pr-acc" data-acc="${a.id}" title="Open account detail 查看账户" tabindex="0">
       <td><span class="ind"></span>${isDemoName(a.name) ? '<span class="pill demo">DEMO</span> ' : ''}${esc(a.name)}${a.archived ? ' <span class="small muted">(archived)</span>' : ''} <span class="small muted">${a.currency}</span></td>
       <td class="right">${money(a.value, a.currency)}</td><td class="right">${money(a.principal, a.currency)}</td>
       <td class="right">${prAmt(a.returns, a.currency)}</td><td class="right">${prPct(a.returns_pct)}</td>
@@ -44,7 +44,8 @@ async function renderPR() {
   $$('[data-pp]', el).forEach(b => b.onclick = () => { st.period = b.dataset.pp; if (st.period !== 'CUSTOM') renderPR(); else { $$('[data-pp]', el).forEach(x => x.classList.toggle('on', x === b)); $('#prCustom').hidden = false; } });
   const ce = () => { st.start = $('#prS').value; st.end = $('#prE').value; if (st.start || st.end) renderPR(); };
   if ($('#prS')) { $('#prS').onchange = ce; $('#prE').onchange = ce; }
-  $$('[data-acc]', el).forEach(tr => tr.onclick = () => { location.hash = '#/account/' + tr.dataset.acc; });
+  $$('[data-acc]', el).forEach(tr => tr.onkeydown = e => { if (e.key === 'Enter') tr.click(); });
+  $$('[data-acc]', el).forEach(tr => tr.onclick = () => { st.scroll = window.scrollY; st.fromList = true; location.hash = '#/investments/account/' + tr.dataset.acc; });
   const P = d.series || [];
   if (P.length && $('#prChart')) chart('prChart', {type: 'line', data: {labels: P.map(q => q.date), datasets: [
     {label: 'Principal 本金', data: P.map(q => q.principal), borderColor: '#4a7bd0', backgroundColor: '#4a7bd0', pointRadius: 0, tension: .2},

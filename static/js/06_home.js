@@ -69,9 +69,10 @@ VIEWS.home = async (v) => {
 /* ---------- Account detail / history 账户明细 (#/account/<id>) ---------- */
 S.acctHist = {};
 const PERIODS = [['1M', '1M'], ['3M', '3M'], ['6M', '6M'], ['YTD', 'YTD'], ['1Y', '1Y'], ['3Y', '3Y'], ['ALL', 'All 全部'], ['CUSTOM', 'Custom 自定义']];
-VIEWS.account = async (v, rest) => {
+VIEWS.account = async (v, rest, ctx = {}) => {
   const id = parseInt(rest[0]);
-  if (!id) { location.hash = '#/accounts'; return; }
+  const inInv = ctx.section === 'investments';  // opened from Investments: back goes to the Investments list
+  if (!id) { location.hash = inInv ? '#/investments' : '#/accounts'; return; }
   const st = S.acctHist[id] = S.acctHist[id] || {period: '1M'};
   const meta = acctById(id);
   if (meta) $('#title').textContent = meta.name;
@@ -98,13 +99,14 @@ VIEWS.account = async (v, rest) => {
   const head = (h) => {
     const a = h.account; A = a; $('#title').textContent = a.name;
     const owed = a.is_liability, b = h.balances;
-    $('#ahHead').innerHTML = `<div class="ah-top"><a href="#/accounts" class="small">← Accounts 账户</a></div>
+    $('#ahHead').innerHTML = `<div class="ah-top">${inInv ? '<a href="#/investments" class="small" id="ahBack">← Investments 投资</a>' : '<a href="#/accounts" class="small">← Accounts 账户</a>'}</div>
       <div class="ah-main"><div><h2>${isDemoName(a.name) ? '<span class="pill demo">DEMO</span> ' : ''}${esc(a.name)} ${a.last4 ? `<span class="muted small">••${esc(a.last4)}</span>` : ''}</h2>
         <div class="small muted">${esc(a.type_label)} · ${a.currency}${a.institution ? ' · ' + esc(a.institution) : ''}${a.reconciled_at ? ` · <a href="javascript:void 0" class="rec-link" id="ahRec">✔ Reconciled 已对账 ${esc(a.reconciled_at.slice(0, 10))}</a>` : ''}</div></div>
         <div class="ah-bal"><div class="lbl small muted">${owed ? 'Owed 欠款' : 'Balance 余额'}</div><div class="val ${owed ? (a.owed > 0 ? 'neg' : '') : a.balance < 0 ? 'neg' : ''}">${money(owed ? a.owed : a.balance, a.currency)}</div>
         ${a.is_investment ? `<div class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</div>` : ''}</div></div>
       <div class="row ah-acts"><button class="btn pri" id="ahAdd">+ Add 记一笔</button><button class="btn" id="ahSet">⚖️ Set balance 调整余额</button><button class="btn" id="ahReconcile">✔ Reconcile 对账</button><button class="btn" id="ahEdit">Edit 编辑</button>
         <a class="btn" href="#/transactions/?account_id=${a.id}">🧾 <span class="hide-s">In Transactions</span></a></div>`;
+    if ($('#ahBack')) $('#ahBack').onclick = e => { if (S.invPR && S.invPR.fromList) { e.preventDefault(); S.invPR.fromList = false; history.back(); } };
     $('#ahAdd').onclick = () => openTx(null, after, {account_id: a.id, currency: a.currency});
     $('#ahSet').onclick = () => adjustForm(a);
     $('#ahReconcile').onclick = () => reconcileDialog(a);
