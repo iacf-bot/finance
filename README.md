@@ -1,4 +1,4 @@
-# IACF Personal Finance
+# IACF Finance
 
 A self-hosted personal finance app modeled on Suishouji (随手记). It runs as a single FastAPI process with a SQLite
 database and a responsive single-page UI, so it works on a phone too. UI and default categories are bilingual
@@ -548,3 +548,23 @@ API:
 - `GET /api/reimbursements/receipts` and `GET /api/reimbursements/receipts/{id}`.
 - `POST /api/reimbursements/mark` takes `{ids, reimbursable, payer?, expected?, note?}`.
 - `POST /api/reimbursements/{id}/write-off` takes `{undo?}`.
+
+## Email rules: Balance adjust 调整余额 (statement balance)
+- A parsing rule with **Kind = Balance adjust** (`kind: "balance"`) treats the extracted amount as the account's **new balance** (statement value), not a transaction amount.
+- **Account:** matched by the last-4 regex (e.g. `Account: XXXXX1516` → 1516) against the account's last 4 digits.
+- **What gets recorded:** the difference, as a balance adjustment using the same logic as Set balance, dated the email date.
+  - The reason comes from the rule's `adjust_reason`: Gain/loss, Interest, Fees, Unrecorded spending/income, Correction/other, or Opening. Blank means the account default (gain/loss for investment accounts).
+  - The reason flows into principal/returns as usual. For example, gain/loss counts as returns, and correction counts as unexplained.
+- **Nothing recorded:**
+  - When the difference is 0, nothing is recorded and the result is logged as `unchanged`.
+  - An unknown account, or no amount found, is `skipped` and logged.
+  - Duplicate emails (same Message-ID) are ignored.
+- **Review mode:**
+  - Without auto-post, or below the review threshold, the adjustment goes to the review inbox.
+  - An email dated on or before the account's latest reconciliation always goes to review.
+- **Tester:** the rule tester shows the adjustment it would record (`balance_preview`) without writing anything.
+- **Template:** "From template" in Settings → Email Monitoring offers *Statement balance (Total Account Value)*. Templates are never inserted automatically, and they are saved disabled.
+  - `amount_regex`: `Total Account Value\s*\$?([\d,]+\.\d{2})`
+  - `last4_regex`: `Account:\s*X+(\d{4})`
+  - `adjust_reason`: gain/loss
+- **API:** `GET /api/email-rules/templates`. The `adjust_reason` field is on `/api/email-rules`.

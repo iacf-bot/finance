@@ -111,9 +111,9 @@ SET.email = async (el) => {
     <td class="small">${m.interval_minutes} min</td><td class="small muted">${esc(m.sender_allowlist || 'any sender')}${m.subject_keywords ? '<br>subj: ' + esc(m.subject_keywords) : ''}</td>
     <td class="small muted">${esc(m.last_checked_at || 'never')}<div>${esc(m.last_status || '')}</div></td>
     <td class="nowrap"><button class="btn sm" data-test="${m.id}">Test connection</button> <button class="btn sm" data-run="${m.id}">Run now</button> <button class="btn sm" data-edit="${m.id}">Edit</button> <button class="btn sm danger" data-del="${m.id}">✕</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No mailboxes yet.</div>'}</div>
-  <div class="card" style="margin-top:16px"><h3>Parsing rules 解析规则 (per sender)<span class="sp"></span><button class="btn sm" id="testRules">Test with a sample email</button><button class="btn sm pri" id="addRule">+ Add rule</button></h3>
+  <div class="card" style="margin-top:16px"><h3>Parsing rules 解析规则 (per sender)<span class="sp"></span><button class="btn sm" id="testRules">Test with a sample email</button><button class="btn sm" id="tplRule">From template 模板</button><button class="btn sm pri" id="addRule">+ Add rule</button></h3>
    <p class="small muted">Rules are tried by priority (lower first) when the sender (and optional subject) regex matches. Each regex's first non-empty capture group is used. Presets are best effort — alert wording changes; edit them freely. Anything unmatched falls back to a generic extractor.</p>
-   <div class="scroll-x"><table class="t"><thead><tr><th>Pri</th><th>Name</th><th>Sender regex</th><th>Kind</th><th>Enabled</th><th></th></tr></thead><tbody>${rules.map(r => `<tr><td>${r.priority}</td><td><b>${esc(r.name)}</b>${r.is_preset ? ' <span class="pill">preset</span>' : ''}<div class="small muted">${esc(r.note || '')}</div></td><td class="mono small">${esc(r.sender_pattern)}${r.subject_pattern ? '<br>subj: ' + esc(r.subject_pattern) : ''}</td><td>${esc(r.kind)}</td>
+   <div class="scroll-x"><table class="t"><thead><tr><th>Pri</th><th>Name</th><th>Sender regex</th><th>Kind</th><th>Enabled</th><th></th></tr></thead><tbody>${rules.map(r => `<tr><td>${r.priority}</td><td><b>${esc(r.name)}</b>${r.is_preset ? ' <span class="pill">preset</span>' : ''}<div class="small muted">${esc(r.note || '')}</div></td><td class="mono small">${esc(r.sender_pattern)}${r.subject_pattern ? '<br>subj: ' + esc(r.subject_pattern) : ''}</td><td>${r.kind === 'balance' ? `Balance adjust 调整余额<div class="small muted">${esc(r.adjust_reason ? (REASON_NAMES[r.adjust_reason] || r.adjust_reason) : 'account default')}</div>` : esc(r.kind)}</td>
      <td><input type="checkbox" data-en="${r.id}" ${r.enabled ? 'checked' : ''}></td><td class="nowrap"><button class="btn sm" data-er="${r.id}">Edit</button> <button class="btn sm danger" data-dr="${r.id}">✕</button></td></tr>`).join('')}</tbody></table></div></div>
   <div class="card" style="margin-top:16px"><h3>Ingest log 处理日志<span class="sp"></span><button class="btn sm" onclick="route()">↻</button></h3>
    ${logs.length ? `<div class="scroll-x"><table class="t"><thead><tr><th>Time</th><th>Via</th><th>Sender</th><th>Subject</th><th>Result</th><th>Detail</th><th>Txn</th></tr></thead><tbody>${logs.map(l => `<tr><td class="small nowrap">${esc(l.time)}</td><td class="small">${esc(l.mailbox_name || l.source)}</td><td class="small">${esc((l.sender || '').slice(0, 40))}</td><td class="small">${esc((l.subject || '').slice(0, 60))}</td>
@@ -128,6 +128,11 @@ SET.email = async (el) => {
   $$('[data-er]', el).forEach(b => b.onclick = () => ruleForm(rules.find(r => r.id == b.dataset.er)));
   $$('[data-dr]', el).forEach(b => b.onclick = async () => { if (!await confirmBox('Delete rule?')) return; await api('/api/email-rules/' + b.dataset.dr, {method: 'DELETE'}); route(); });
   $('#addRule').onclick = () => ruleForm();
+  $('#tplRule').onclick = async () => {
+    const tpls = await api('/api/email-rules/templates');
+    const bg = modal('New rule from a template 从模板新建', `<p class="small muted" style="margin-top:0">Opens a prefilled rule form. Nothing is saved until you press Save, and templates are saved <b>disabled</b>; fill in the sender regex, test, then enable.</p>${tpls.map((t, i) => `<div class="acct"><div class="nm"><b>${esc(t.name)}</b><span class="small muted">${esc(t.note || '')}</span></div><button class="btn sm pri" data-tpl="${i}">Use</button></div>`).join('')}`);
+    $$('[data-tpl]', bg).forEach(b => b.onclick = () => { bg.close(); ruleForm(null, tpls[+b.dataset.tpl]); });
+  };
   $('#testRules').onclick = () => ruleTester();
 };
 function mailboxForm(m) {
@@ -157,8 +162,18 @@ function mailboxForm(m) {
     try { const r = await api('/api/mailboxes/test', {method: 'POST', body: o}); $('#mtest', bg).innerHTML = r.ok ? `✅ Connected. ${r.messages_in_folder} messages in folder. Folders: <span class="muted">${esc((r.folders || []).join(', '))}</span>` : `❌ ${esc(r.error)}`; } catch (e) { $('#mtest', bg).textContent = '❌ ' + e.message; } };
   $('[data-ok]', bg).onclick = async () => { await guard(() => api(isNew ? '/api/mailboxes' : '/api/mailboxes/' + m.id, {method: isNew ? 'POST' : 'PUT', body: collect()})); bg.close(); toast('Saved'); route(); };
 }
-function ruleForm(r) {
-  const isNew = !r; r = r || {kind: 'auto', priority: 10, enabled: 1};
+const REASON_NAMES = {investment_gain: 'Gain/loss 投资收益/亏损', interest: 'Interest 利息', fees: 'Fees 费用', unrecorded_spending: 'Unrecorded spending 未记支出', unrecorded_income: 'Unrecorded income 未记收入', correction: 'Correction/other 校正/其他', opening: 'Opening balance 期初余额'};
+const KIND_NAMES = {auto: 'auto', expense: 'expense', income: 'income', refund: 'refund', balance: 'Balance adjust 调整余额'};
+function balancePreviewTxt(p) {
+  if (!p) return '';
+  if (!p.ok) return `⚠️ ${p.problem}`;
+  const d = p.difference;
+  return `${p.account_name}: balance ${money(p.previous, p.currency)} → statement ${money(p.statement_balance, p.currency)} on ${p.date ? p.date.slice(0, 10) : 'today'} · `
+    + (Math.abs(d) < 0.005 ? 'no change, nothing recorded' : `adjustment ${d > 0 ? '+' : '−'}${money(Math.abs(d), p.currency)} (${p.reason_label})`)
+    + (p.before_reconciliation ? ` · on/before reconciliation ${p.reconciled_at.slice(0, 10)}: goes to review` : '');
+}
+function ruleForm(r, tpl) {
+  const isNew = !r; r = r || tpl || {kind: 'auto', priority: 10, enabled: 1};
   const bg = modal(isNew ? 'New parsing rule' : 'Edit rule — ' + esc(r.name), `<form class="form" id="rf2">
    <label class="f"><span>Name</span><input name="name" value="${esc(r.name || '')}"></label><label class="f"><span>Priority (lower runs first)</span><input name="priority" type="number" value="${r.priority}"></label>
    <label class="f"><span>Sender regex (matched against From)</span><input class="mono" name="sender_pattern" value="${esc(r.sender_pattern || '')}" placeholder="alerts@mybank\\.com"></label>
@@ -166,18 +181,22 @@ function ruleForm(r) {
    <label class="f full"><span>Amount regex</span><input class="mono" name="amount_regex" value="${esc(r.amount_regex || '')}" placeholder="\\$([\\d,]+\\.\\d{2})"></label>
    <label class="f full"><span>Merchant regex</span><input class="mono" name="merchant_regex" value="${esc(r.merchant_regex || '')}"></label>
    <label class="f"><span>Last-4 regex</span><input class="mono" name="last4_regex" value="${esc(r.last4_regex || '')}" placeholder="ending in (\\d{4})"></label>
-   <label class="f"><span>Kind</span><select name="kind">${['auto', 'expense', 'income', 'refund'].map(k => `<option ${r.kind === k ? 'selected' : ''}>${k}</option>`).join('')}</select></label>
+   <label class="f"><span>Kind</span><select name="kind">${Object.entries(KIND_NAMES).map(([k, l]) => `<option value="${k}" ${r.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+   <label class="f" id="rfReason"${r.kind === 'balance' ? '' : ' hidden'}><span>Adjustment reason 差额原因</span><select name="adjust_reason"><option value="">Account default (gain/loss for investment accounts)</option>${Object.entries(REASON_NAMES).map(([k, l]) => `<option value="${k}" ${r.adjust_reason === k ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">The amount found is the NEW account balance (statement value); the account is matched by its last 4 digits and the difference is recorded like Set balance, dated the email date.</span></label>
+   <label class="f"><span>Enabled</span><select name="enabled"><option value="1" ${r.enabled ? 'selected' : ''}>Yes</option><option value="0" ${r.enabled ? '' : 'selected'}>No (disabled)</option></select></label>
    <label class="f"><span>Currency (blank = detect / account currency)</span><input name="currency" value="${esc(r.currency || '')}"></label>
    <label class="f"><span>Note</span><input name="note" value="${esc(r.note || '')}"></label>
    <label class="f full"><span>Try it: paste a sample email body (the subject is included automatically)</span><textarea id="sample" placeholder="You made a $12.34 transaction with TEST MERCHANT on your card ending in 0000"></textarea></label>
    <div class="full"><button type="button" class="btn sm" id="tryR">Test this rule</button> <span id="tryOut" class="small mono"></span></div></form>`, {wide: true, buttons: '<button class="btn pri" data-ok>Save</button>'});
   const f = $('#rf2', bg);
-  $('#tryR', bg).onclick = async () => { const rule = Object.fromEntries(new FormData(f)); const res = await guard(() => api('/api/email-rules/test', {method: 'POST', body: {from: (rule.sender_pattern || '').replace(/\\/g, ''), subject: '', body: $('#sample', bg).value, rule}})); $('#tryOut', bg).textContent = JSON.stringify(res); };
+  f.kind.onchange = () => { $('#rfReason', bg).hidden = f.kind.value !== 'balance'; };
+  $('#tryR', bg).onclick = async () => { const rule = Object.fromEntries(new FormData(f)); const res = await guard(() => api('/api/email-rules/test', {method: 'POST', body: {from: (rule.sender_pattern || '').replace(/\\/g, ''), subject: '', body: $('#sample', bg).value, rule}}));
+    const bp = res.balance_preview; delete res.balance_preview; $('#tryOut', bg).textContent = (bp ? '🧮 ' + balancePreviewTxt(bp) + '\n' : '') + JSON.stringify(res); };
   $('[data-ok]', bg).onclick = async () => { await guard(() => api(isNew ? '/api/email-rules' : '/api/email-rules/' + r.id, {method: isNew ? 'POST' : 'PUT', body: Object.fromEntries(new FormData(f))})); bg.close(); route(); };
 }
 function ruleTester() {
   const bg = modal('Test parsing rules with a sample email', `<form class="form" id="tf"><label class="f"><span>From</span><input name="from" placeholder="no-reply@alerts.chase.com"></label><label class="f"><span>Subject</span><input name="subject"></label><label class="f full"><span>Body (text or HTML)</span><textarea name="body" style="min-height:140px"></textarea></label></form><pre id="tout" class="small"></pre>`, {wide: true, buttons: '<button class="btn" data-ingest>Ingest into review inbox</button><button class="btn pri" data-ok>Parse</button>'});
   const f = $('#tf', bg);
-  $('[data-ok]', bg).onclick = async () => { $('#tout', bg).textContent = JSON.stringify(await guard(() => api('/api/email-rules/test', {method: 'POST', body: Object.fromEntries(new FormData(f))})), null, 2); };
+  $('[data-ok]', bg).onclick = async () => { const res = await guard(() => api('/api/email-rules/test', {method: 'POST', body: Object.fromEntries(new FormData(f))})); $('#tout', bg).textContent = (res.balance_preview ? '🧮 Adjustment preview 调整预览: ' + balancePreviewTxt(res.balance_preview) + '\n\n' : '') + JSON.stringify(res, null, 2); };
   $('[data-ingest]', bg).onclick = async () => { const r = await guard(() => api('/api/ingest/email', {method: 'POST', body: Object.fromEntries(new FormData(f))})); $('#tout', bg).textContent = JSON.stringify({result: r.result, confidence: r.confidence, reasons: r.reasons, transaction_id: r.transaction && r.transaction.id}, null, 2); loadMeta(); };
 }

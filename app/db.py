@@ -334,6 +334,9 @@ class Database:
             acols = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
             if "opening_returns" not in acols:
                 con.execute("ALTER TABLE accounts ADD COLUMN opening_returns REAL")
+            # email rules: kind 'balance' (statement balance -> set-balance adjustment) + its reason (additive)
+            if "adjust_reason" not in {r[1] for r in con.execute("PRAGMA table_info(email_rules)")}:
+                con.execute("ALTER TABLE email_rules ADD COLUMN adjust_reason TEXT DEFAULT ''")
             # cursor pagination / account history (additive indexes)
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_date_id ON transactions(date, id)")
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_acct_date ON transactions(account_id, date, id)")

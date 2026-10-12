@@ -1206,7 +1206,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             ORDER BY l.id DESC LIMIT ?""", (min(limit, 2000),))
 
     RULE_FIELDS = ["name", "sender_pattern", "subject_pattern", "amount_regex", "merchant_regex", "last4_regex", "kind",
-                   "currency", "enabled", "priority", "note"]
+                   "currency", "enabled", "priority", "note", "adjust_reason"]
 
     def _rule_data(body: dict) -> dict:
         d = {k: body[k] for k in RULE_FIELDS if k in body}
@@ -1216,8 +1216,13 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                     re.compile(d[k])
                 except re.error as e:
                     raise HTTPException(400, f"{k}: invalid regex ({e})")
-        if "kind" in d and d["kind"] not in ("auto", "expense", "income", "refund"):
-            raise HTTPException(400, "kind: auto | expense | income | refund")
+        from .email_rules import RULE_KINDS
+        if "kind" in d and d["kind"] not in RULE_KINDS:
+            raise HTTPException(400, "kind: " + " | ".join(RULE_KINDS))
+        if "adjust_reason" in d:
+            d["adjust_reason"] = (d["adjust_reason"] or "").strip()
+            if d["adjust_reason"] and d["adjust_reason"] not in ledger.REASON_CODES:
+                raise HTTPException(400, f"adjust_reason must be one of {ledger.REASON_CODES} (blank = account default)")
         if "enabled" in d:
             d["enabled"] = 1 if d["enabled"] in (True, 1, "1", "true", "on") else 0
         return d
@@ -1251,6 +1256,11 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             con.execute("DELETE FROM email_rules WHERE id=?", (rid,))
         return {"ok": True}
 
+    @app.get("/api/email-rules/templates")
+    def email_rule_templates():
+        from .email_rules import RULE_TEMPLATES
+        return RULE_TEMPLATES
+
     @app.post("/api/email-rules/test")
     def test_rules(body: dict = Body(...)):
         rules = db.all("SELECT * FROM email_rules WHERE enabled=1")
@@ -1258,6 +1268,8 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             rules = [dict(_rule_data(body["rule"]), id=0, enabled=1, name=body["rule"].get("name") or "test")]
         res = parse_email(body.get("from") or "", body.get("subject") or "", body.get("body") or "", rules)
         res.pop("text", None)
+        if res.get("kind") == "balance":  # preview of the adjustment it would record (no writes)
+            res["balance_preview"] = ingest.balance_plan(db, res, ingest._email_date({"received_at": body.get("received_at")}))
         return res
 
     # ------------------------------------------------------------ demo
