@@ -716,3 +716,40 @@ def due_mailboxes(db: Database, now: datetime | None = None) -> list[dict]:
             continue
         out.append(mb)
     return out
+
+
+# ---------------------------------------------------------------- receipt photos 小票
+def receipt_draft(db: Database, parsed: dict, account_id=None) -> dict:
+    """Draft transaction from parsed receipt fields; category/account guessed by the quick-add parser (merchant
+    memory, keywords, account names in the text). Nothing is saved."""
+    merchant, total = parsed.get("merchant"), parsed.get("total")
+    probe = " ".join(x for x in (merchant, f"{total:.2f}" if total else None) if x) or "receipt"
+    res = parse_quick_add(probe, ledger.parse_ctx(db))
+    draft = {"kind": "expense", "amount": total, "currency": parsed.get("currency"), "merchant": merchant,
+             "date": parsed.get("date"), "category_id": res.category_id,
+             "account_id": int(account_id) if account_id else res.account_id, "note": "Receipt 小票"}
+    if draft["currency"] and draft["account_id"]:
+        acur = (db.one("SELECT currency FROM accounts WHERE id=?", (draft["account_id"],)) or {}).get("currency")
+        if acur == draft["currency"]:
+            draft["currency"] = None  # same as the account: no conversion
+    uncertain = [k for k in ("amount", "merchant", "date", "category_id", "account_id") if not draft.get(k if k != "amount" else "amount")]
+    conf = parsed.get("confidence") or 0.0
+    if res.category_id:
+        conf += 0.05
+    if draft["account_id"]:
+        conf += 0.05
+    return {"draft": draft, "confidence": round(min(conf, 1.0), 2), "uncertain": uncertain}
+
+
+def receipt_message(out: dict, zh: bool = False) -> str:
+    d = out.get("draft") or {}
+    amt = fmt_money(d.get("amount"), d.get("currency") or "") if d.get("amount") is not None else None
+    what = " ".join(x for x in (d.get("merchant"), amt) if x) or ("小票" if zh else "receipt")
+    if out.get("transaction"):
+        st = out["transaction"]["status"]
+        return (f"已记: {what}" if st == "posted" else f"待确认: {what}") if zh else (f"Saved: {what}" if st == "posted" else f"To review: {what}")
+    if not out.get("ocr", {}).get("available"):
+        return "已保存照片 (无 OCR): 请手动填写" if zh else "Photo saved (no OCR on server): fill in the details"
+    if d.get("amount") is None:
+        return "未识别出金额: 请手动填写" if zh else f"Couldn't read the total: check {what}"
+    return f"识别: {what}" if zh else f"Read: {what}"

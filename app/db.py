@@ -334,6 +334,12 @@ class Database:
             acols = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
             if "opening_returns" not in acols:
                 con.execute("ALTER TABLE accounts ADD COLUMN opening_returns REAL")
+            # receipt photos 小票 (additive): files under the receipts folder, path stored relative to it
+            con.execute("""CREATE TABLE IF NOT EXISTS receipts (
+                id INTEGER PRIMARY KEY, transaction_id INTEGER, rel_path TEXT NOT NULL DEFAULT '', orig_name TEXT,
+                mime TEXT, size INTEGER, sha256 TEXT, ocr_text TEXT, ocr_confidence REAL, parsed TEXT,
+                kept INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now','localtime')))""")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_receipts_tx ON receipts(transaction_id)")
             # mailbox schedule: interval (default, existing behaviour) or fixed local times (additive)
             mcols = {r[1] for r in con.execute("PRAGMA table_info(mailboxes)")}
             for col, ddl in (("schedule_mode", "TEXT DEFAULT 'interval'"), ("schedule_times", "TEXT DEFAULT ''"),

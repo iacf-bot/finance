@@ -71,6 +71,15 @@ if ($LASTEXITCODE -ne 0) {
 & $venvPy -c "import fastapi, uvicorn, cryptography, zoneinfo; zoneinfo.ZoneInfo('America/Los_Angeles'); print('Packages OK')"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
+# Optional: Tesseract OCR for receipt photos (runs locally; without it photos are saved but not read)
+$tess = Get-Command tesseract -ErrorAction SilentlyContinue
+if (-not $tess -and -not (Test-Path 'C:\Program Files\Tesseract-OCR\tesseract.exe')) {
+    Write-Host 'Optional: receipt-photo OCR needs Tesseract. Install it with one of:' -ForegroundColor Yellow
+    Write-Host '    winget install UB-Mannheim.TesseractOCR      (or: choco install tesseract)' -ForegroundColor Yellow
+    Write-Host '  For Chinese receipts also add chi_sim.traineddata to C:\Program Files\Tesseract-OCR\tessdata' -ForegroundColor Yellow
+    Write-Host '  (https://github.com/tesseract-ocr/tessdata). Then restart the app.' -ForegroundColor Yellow
+} else { Write-Host 'Tesseract OCR found (receipt photos will be read locally).' }
+
 $data = Get-DataDir
 New-Item -ItemType Directory -Force -Path (Join-Path $data 'logs') | Out-Null
 # Windows equivalent of "chmod 700 data": only you, SYSTEM and Administrators may open the data folder

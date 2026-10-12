@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import config, demo, importers, ingest, ledger, principal, quotes, reimburse, reconcile, returns, schedules
+from . import config, demo, importers, ingest, ledger, principal, quotes, receipts, reimburse, reconcile, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -164,8 +164,9 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     # ------------------------------------------------------------ meta / settings
     SETTING_KEYS = ["base_currency", "review_threshold", "default_account_id", "default_ledger_id",
                     "backup_interval_hours", "backup_keep", "schedule_run_time", "schedule_catchup_days", "timezone",
-                    "lock_reconciled"]
-    SETTING_DEFAULTS = {"schedule_run_time": "00:15", "schedule_catchup_days": "90", "timezone": schedules.DEFAULT_TZ, "lock_reconciled": "0"}
+                    "lock_reconciled", "receipts_dir", "receipts_pattern"]
+    SETTING_DEFAULTS = {"schedule_run_time": "00:15", "schedule_catchup_days": "90", "timezone": schedules.DEFAULT_TZ, "lock_reconciled": "0",
+                        "receipts_dir": "", "receipts_pattern": "{yyyy}/{mm}/{dd}"}
 
     @app.get("/api/meta")
     def meta():
@@ -234,6 +235,20 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                 if k == "schedule_catchup_days":
                     if not str(v).isdigit() or not 0 <= int(v) <= 3650:
                         raise HTTPException(400, "Catch-up days must be 0–3650")
+                if k == "receipts_pattern":
+                    try:
+                        v = receipts.validate_pattern(str(v or ""))
+                    except receipts.ReceiptError as e:
+                        raise HTTPException(400, str(e))
+                if k == "receipts_dir" and v:
+                    pth = Path(os.path.expanduser(str(v).strip()))
+                    if not pth.is_absolute():
+                        raise HTTPException(400, "Receipts folder must be an absolute path (blank = data/receipts)")
+                    try:
+                        pth.mkdir(parents=True, exist_ok=True)
+                    except OSError as e:
+                        raise HTTPException(400, f"Can't use that folder: {e}")
+                    v = str(pth)
                 if k == "timezone":
                     try:
                         from zoneinfo import ZoneInfo
@@ -536,11 +551,14 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     def add_tx(request: Request, body: dict = Body(...)):
         body.setdefault("source", "web" if getattr(request.state, "via", "") == "session" else "api")
         remember = body.pop("remember", False)
+        receipt_ids = [int(i) for i in (body.pop("receipt_ids", None) or [])]
         probe = {"date": str(body.get("date") or "9999").replace("T", " "), "account_id": body.get("account_id"),
                  "to_account_id": body.get("to_account_id"), "kind": body.get("kind")}
         warning = reconcile.edit_warning(db, _recon_points(probe)) if body.get("date") else None
         _recon_guard(warning, body.pop("confirm_reconciled", None))
         tx = ledger.create_tx(db, body)
+        if receipt_ids:
+            tx["receipts"] = receipts.link(db, receipt_ids, tx["id"])
         if warning:
             tx["reconcile_warning"] = warning
         if remember:  # the form asks the server to remember last-used account/category/currency/member per type
@@ -617,12 +635,13 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             t = ledger.update_tx(db, tid, body)
         except KeyError:
             raise HTTPException(404)
+        receipts.relocate_for_tx(db, tid)  # receipt files follow the date/merchant/amount
         if warning:
             t["reconcile_warning"] = warning
         return t
 
     @app.delete("/api/transactions/{tid}")
-    def del_tx(tid: int, confirm_reconciled: bool = False):
+    def del_tx(tid: int, confirm_reconciled: bool = False, keep_receipts: bool = False):
         old = db.one("SELECT * FROM transactions WHERE id=?", (tid,))
         warning = reconcile.edit_warning(db, _recon_points(old))
         _recon_guard(warning, confirm_reconciled)
@@ -631,6 +650,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             con.execute("DELETE FROM transactions WHERE id=?", (tid,))
         if t and t.get("attachment"):
             (data_dir / "attachments" / t["attachment"]).unlink(missing_ok=True)
+        receipts.on_tx_delete(db, [tid], keep=keep_receipts)
         return {"ok": True, **({"reconcile_warning": warning} if warning else {})}
 
     @app.post("/api/transactions/bulk-delete")
@@ -640,15 +660,135 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             return {"deleted": 0}
         with db.tx() as con:
             n = con.execute(f"DELETE FROM transactions WHERE id IN ({','.join('?' * len(ids))})", ids).rowcount
+        receipts.on_tx_delete(db, ids, keep=bool(body.get("keep_receipts")))
         return {"deleted": n}
+
+    # ------------------------------------------------------------ receipt photos 小票 (local OCR)
+    @app.get("/api/receipts/status")
+    def receipts_status():
+        return {"ocr": receipts.ocr_status(), "folder": str(receipts.base_dir(db)),
+                "pattern": db.get_setting("receipts_pattern") or receipts.DEFAULT_PATTERN,
+                "max_mb": receipts.MAX_BYTES // 1024 // 1024, "max_files": receipts.MAX_FILES}
+
+    @app.post("/api/receipts")
+    async def upload_receipts(request: Request, auto_post: bool = False, account_id: int | None = None,
+                              ledger_id: int | None = None):
+        """Multipart (file / files fields) or JSON {image|images: base64, filename?, auto_post?, account_id?}.
+        auto_post=false (default): returns a draft for the form; nothing is recorded. auto_post=true: records the
+        transaction (posted if confident, else To review) with the image(s) attached."""
+        items = []
+        ctype = request.headers.get("content-type", "")
+        if ctype.startswith("multipart/"):
+            form = await request.form()
+            for k in ("file", "files", "files[]", "image", "photo"):
+                for f in form.getlist(k):
+                    if hasattr(f, "read"):
+                        items.append((await f.read(receipts.MAX_BYTES + 1), f.filename or ""))
+            auto_post = auto_post or str(form.get("auto_post") or "").lower() in ("1", "true", "yes", "on")
+            account_id = account_id or (int(form.get("account_id")) if str(form.get("account_id") or "").isdigit() else None)
+        else:
+            try:
+                body = await request.json()
+            except Exception:  # noqa: BLE001
+                raise HTTPException(400, "Send multipart/form-data with a 'file' field, or JSON {\"image\": \"<base64>\"}")
+            imgs = body.get("images") or ([body["image"]] if body.get("image") else [])
+            try:
+                items = [(receipts.decode_b64(b), body.get("filename") or "") for b in imgs]
+            except receipts.ReceiptError as e:
+                raise HTTPException(400, str(e))
+            auto_post = auto_post or str(body.get("auto_post") or "").lower() in ("1", "true", "yes")
+            account_id = account_id or body.get("account_id")
+            ledger_id = ledger_id or body.get("ledger_id")
+        if not items:
+            raise HTTPException(400, "No image received (field 'file')")
+        if len(items) > receipts.MAX_FILES:
+            raise HTTPException(400, f"Too many images (max {receipts.MAX_FILES})")
+        receipts.cleanup_drafts(db)
+        saved = []
+        try:
+            for data, name in items:
+                saved.append(receipts.save_upload(db, data, name))
+        except receipts.ReceiptError as e:
+            for r in saved:
+                receipts.delete(db, r["id"])
+            raise HTTPException(400, str(e))
+        # several photos of one receipt: the first with a readable total wins, the rest fill gaps
+        parsed = {}
+        for r in saved:
+            for k, v in (r["parsed"] or {}).items():
+                if parsed.get(k) in (None, [], "") and v not in (None, [], ""):
+                    parsed[k] = v
+        parsed.setdefault("confidence", 0.0)
+        out = {"receipts": [{k: r[k] for k in ("id", "url", "thumb_url", "rel_path", "size", "ocr_confidence")} for r in saved],
+               "receipt_ids": [r["id"] for r in saved], "ocr": receipts.ocr_status(), "parsed": parsed,
+               "ocr_text": "\n---\n".join(r["ocr_text"] or "" for r in saved)[:6000]}
+        out.update(ingest.receipt_draft(db, parsed, account_id))
+        if auto_post:
+            th = float(db.get_setting("review_threshold", "0.75"))
+            d = dict(out["draft"])
+            ok = out["confidence"] >= th and d.get("amount") and d.get("account_id")
+            d.update(status="posted" if ok else "review", source="receipt", confidence=out["confidence"],
+                     raw_text=out["ocr_text"][:4000], ledger_id=int(ledger_id or db.get_setting("default_ledger_id", "1") or 1))
+            if not d.get("date"):
+                d.pop("date")
+            try:
+                tx = ledger.create_tx(db, d)
+            except ledger.ValidationError:
+                d["status"] = "review"
+                tx = ledger.create_tx(db, {**d, "amount": d.get("amount") or 0})
+            receipts.link(db, out["receipt_ids"], tx["id"])
+            out["transaction"] = ledger.get_tx(db, tx["id"])
+            out["status"] = out["transaction"]["status"]
+        else:
+            out["status"] = "draft"
+        zh = bool(re.search(r"[\u3400-\u9fff]", out["ocr_text"] or "")) and not re.search(r"[A-Za-z]{4,}", (out["draft"].get("merchant") or ""))
+        out["message"] = ingest.receipt_message(out, zh)
+        return out
+
+    @app.get("/api/receipts/{rid}")
+    def receipt_info(rid: int):
+        r = receipts.get(db, rid)
+        if not r:
+            raise HTTPException(404, "Receipt not found")
+        return r
+
+    @app.get("/api/receipts/{rid}/image")
+    def receipt_image(rid: int, thumb: bool = False):
+        r = db.one("SELECT rel_path, mime FROM receipts WHERE id=?", (rid,))
+        if not r or not r["rel_path"]:
+            raise HTTPException(404, "Receipt not found")
+        p = receipts.abs_path(db, r["rel_path"])
+        if not p.exists():
+            raise HTTPException(404, "Receipt file missing (receipts folder moved?)")
+        if thumb:
+            return Response(receipts.thumbnail(p), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+        return FileResponse(p, media_type=r["mime"] or "image/jpeg", filename=p.name)
+
+    @app.post("/api/receipts/{rid}/link")
+    def receipt_link(rid: int, body: dict = Body(...)):
+        try:
+            return receipts.link(db, [rid], int(body.get("transaction_id") or 0))
+        except receipts.ReceiptError as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/receipts/{rid}")
+    def receipt_delete(rid: int):
+        receipts.delete(db, rid)
+        return {"ok": True}
+
+    @app.get("/api/transactions/{tid}/receipts")
+    def tx_receipts(tid: int):
+        return receipts.for_tx(db, tid)
 
     @app.post("/api/transactions/{tid}/approve")
     def approve(tid: int, body: dict = Body(default={})):
         body = dict(body or {}); body["status"] = "posted"
         try:
-            return ledger.update_tx(db, tid, body)
+            t = ledger.update_tx(db, tid, body)
         except KeyError:
             raise HTTPException(404)
+        receipts.relocate_for_tx(db, tid)
+        return t
 
     @app.post("/api/transactions/{tid}/attachment")
     async def upload_attachment(tid: int, file: UploadFile = File(...)):

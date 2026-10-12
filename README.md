@@ -583,3 +583,40 @@ API:
 - **API:**
   - `GET /api/mailboxes` adds `schedule_text`, `next_run` (local `YYYY-MM-DD HH:MM`), `timezone`, `last_checked_at` and `last_slot`.
   - POST and PUT accept `schedule_mode`, `schedule_times` and `schedule_weekdays`.
+
+## Receipt photos 小票 (local OCR)
+- Use **📷** in the quick-add bar (or drop an image on it), or **Fill from photo 拍照识别** in the transaction form. On a phone it can open the camera; on a computer you can pick or drag in several images.
+- The browser shrinks big photos before uploading. The server reads the text with **Tesseract** (eng + chi_sim), and the form opens pre-filled with merchant, date, total, currency and a guessed category/account (quick-add parser + merchant memory). **Nothing is saved until you press Save.**
+- Saved photos are attached to the transaction and show as thumbnails in its detail view. When you delete a transaction, you choose whether its photos are deleted too or kept.
+- **OCR runs only on your machine.** No cloud service is used. Without Tesseract, photos are still stored and you type the details yourself. `GET /api/receipts/status` reports what's available.
+  - Linux: `apt install tesseract-ocr tesseract-ocr-chi-sim`. Windows: see RUN_ON_WINDOWS.md.
+  - HEIC works when `pillow-heif` is installed. Otherwise use JPEG (iPhone: Settings → Camera → Formats → Most Compatible).
+- **How the text is parsed:**
+  - Total: an amount on a TOTAL / Amount Due / Grand Total / 合计 / 实付 / 应付 line, skipping subtotal/tax/tip/change/discount lines. Without such a line, the largest amount is used, at low confidence.
+  - Dates: `2026-10-03`, `2026年10月3日`, `10/03/2026`, `Oct 3, 2026`, plus a time if one is printed.
+  - Merchant: the first meaningful top line.
+  - Currency: from ¥/￥/元/$/€/£.
+  - The response includes a confidence score.
+- **Storage:**
+  - Default layout is `data/receipts/{yyyy}/{mm}/{dd}/YYYYMMDD_HHMMSS_<merchant>_<amount>_<id>.jpg`, using the receipt or transaction date (upload time when no date is found).
+  - In Settings, `receipts_dir` sets the base folder (an absolute path, e.g. a NAS or synced Google Drive folder) and `receipts_pattern` sets the sub-folders, e.g. `{yyyy}/{mm}` or `{yyyy}-{mm}`.
+  - The database stores paths relative to the base folder. When a transaction's date, merchant or amount changes, its files are renamed or moved to match.
+  - Files under the data folder are copied into `backups/receipts` with each backup.
+  - Limits: 15 MB per image, 6 images per receipt. Unconfirmed uploads are removed after 14 days.
+- **API** (`X-API-Key` header):
+  - `POST /api/receipts`: multipart `file` (repeatable), or JSON `{"image": "<base64>", "auto_post": false}`.
+    - `auto_post=false` (default) returns `draft`, `receipt_ids`, `confidence`, `message`.
+    - `auto_post=true` records the transaction, posted when confident or To review otherwise, with the photo attached.
+  - `GET /api/receipts/{id}/image[?thumb=1]`, `POST /api/receipts/{id}/link {"transaction_id"}`, `GET /api/transactions/{id}/receipts`.
+  - `POST /api/transactions` accepts `receipt_ids`. `DELETE /api/transactions/{id}?keep_receipts=true` keeps the photos.
+
+### iPhone Shortcut: photo → transaction
+1. **Take Photo** (or **Select Photos**). Optionally add **Convert Image** to JPEG, plus **Resize Image** to a width of 2000.
+2. **Get Contents of URL**:
+   - URL: `http://<your-server>:8088/api/receipts?auto_post=true`
+   - Method: POST
+   - Headers: `X-API-Key: <your key>`
+   - Request Body: **Form**, with a field `file` of type **File** set to the photo.
+3. **Get Dictionary Value** `message`, then **Show Notification** (or **Speak Text**). You'll see something like "Saved: TEST MART $11.10" or "To review: …".
+
+Leave out `auto_post=true` to get a draft only. To send base64 JSON instead, use **Base64 Encode** → JSON body `{"image": <Base64>}`.
