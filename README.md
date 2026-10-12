@@ -620,3 +620,37 @@ API:
 3. **Get Dictionary Value** `message`, then **Show Notification** (or **Speak Text**). You'll see something like "Saved: TEST MART $11.10" or "To review: …".
 
 Leave out `auto_post=true` to get a draft only. To send base64 JSON instead, use **Base64 Encode** → JSON body `{"image": <Base64>}`.
+
+## Reminder Center 提醒中心
+
+* **Credit cards**: in the account form set *Statement day 账单日* and either *Due day 还款日* or *due N days after
+  statement*. Optional: remind days, minimum payment %, autopay. Each closed cycle creates one reminder. It shows the
+  statement date, due date and statement balance (amount owed at the end of the statement day, reconciliation honoured).
+  You can edit the statement amount 账单金额, the minimum and the statement number.
+  The reminder completes itself once transfers into the card after the statement date cover the amount. Until then it
+  shows what is still owed.
+* **Scheduled reminders**: in a schedule pick *When due → Remind only 仅提醒*. Works with one-time (`once`) and
+  recurring schedules. It creates a reminder instead of a transaction. *Paid* can create the transaction from the
+  schedule template.
+* **Lead window**: reminders appear N days before the due date. The default is 10 (*Reminders → Settings*,
+  `reminder_lead_days`). A schedule can override it with *Remind days before*, a card with *Remind days before due*.
+  The *All upcoming* filter shows later items. The nav badge counts overdue items plus items inside their window.
+* Actions: Paid (optionally records the payment transfer), ✓ done, Snooze, ✕ dismiss, Reopen, edit.
+  A background job (about every 10 min) generates and auto-completes reminders. It is idempotent.
+  Optional Telegram push (setting `reminder_notify=telegram`, off by default) sends one message per reminder when it
+  enters its window. Email push isn't implemented.
+* API: `GET /api/reminders?view=open|all_upcoming|later|overdue|snoozed|done|all`, `PUT /api/reminders/{id}`, and
+  `POST /api/reminders/{id}/paid|done|dismiss|snooze|reopen`.
+
+### iPhone Shortcut: daily reminder notification
+
+`GET /api/reminders/notify?days=7&include_overdue=true&lang=auto` (header `X-API-Key`). It returns
+`{count, title, message, items}`, for example `"3 条提醒"` with one line per item: due date, name, amount and ⚠️ if
+overdue. Items are only included inside their lead window.
+
+1. Shortcuts → Automation → **+** → Personal Automation → **Time of Day** (e.g. 09:00, Daily) → Run Immediately.
+2. **Get Contents of URL**: `http://xxx.xxx.xxx.xxx:8088/api/reminders/notify?days=7`, Method GET, Header
+   `X-API-Key: <your key>`.
+3. **Get Dictionary Value** `count` → **If** `count` *is greater than* 0:
+   **Get Dictionary Value** `title` and `message` from the URL contents → **Show Notification** (title, message).
+4. Optional: a second shortcut can call `POST /api/reminders/{id}/done` to tick an item off.

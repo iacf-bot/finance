@@ -128,13 +128,13 @@ function typeOptions(selected) { return Object.entries(S.meta.account_types).map
 /* ---------- navigation ---------- */
 const ROUTES = [
   ['home', '🏠', 'Home 首页'], ['dashboard', '📊', 'Dashboard 仪表盘'], ['transactions', '🧾', 'Transactions 流水'], ['accounts', '🏦', 'Accounts 账户'],
-  ['investments', '📈', 'Investments 投资'], ['budgets', '🎯', 'Budgets 预算'], ['scheduled', '🔁', 'Scheduled 定时'], ['reimb', '🧾', 'Reimbursements 报销中心'], ['reports', '📉', 'Reports 报表'],
+  ['investments', '📈', 'Investments 投资'], ['budgets', '🎯', 'Budgets 预算'], ['scheduled', '🔁', 'Scheduled 定时'], ['reimb', '🧾', 'Reimbursements 报销中心'], ['reminders', '⏰', 'Reminders 提醒中心'], ['reports', '📉', 'Reports 报表'],
   ['review', '📥', 'Quick add & Review 待确认'], ['settings', '⚙️', 'Settings 设置'],
 ];
 function renderNav() {
   let cur = (location.hash.slice(2) || 'home').split(/[/?]/)[0]; if (cur === 'account') cur = 'accounts';
   const rc = S.meta ? S.meta.review_count : 0;
-  $('#nav').innerHTML = ROUTES.map(([k, i, l]) => `<a href="#/${k}" class="${k === cur ? 'active' : ''}"><span class="ico">${i}</span>${l}${k === 'review' && rc ? `<span class="badge">${rc}</span>` : ''}</a>`).join('');
+  $('#nav').innerHTML = ROUTES.map(([k, i, l]) => `<a href="#/${k}" class="${k === cur ? 'active' : ''}"><span class="ico">${i}</span>${l}${k === 'review' && rc ? `<span class="badge">${rc}</span>` : ''}${k === 'reminders' && S.meta && S.meta.reminder_count ? `<span class="badge">${S.meta.reminder_count}</span>` : ''}</a>`).join('');
   const mob = ['home', 'transactions', 'accounts', 'review', 'settings'];
   $('#mnav').innerHTML = ROUTES.filter(r => mob.includes(r[0])).map(([k, i, l]) => `<a href="#/${k}" class="${k === cur ? 'active' : ''}"><span class="ico">${i}</span>${l.split(' ')[0].replace('Quick', 'Review')}${k === 'review' && rc ? `<span class="badge">${rc}</span>` : ''}</a>`).join('');
 }

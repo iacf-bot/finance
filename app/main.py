@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import config, demo, importers, ingest, ledger, principal, quotes, receipts, reimburse, reconcile, returns, schedules
+from . import config, demo, importers, ingest, ledger, principal, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -164,9 +164,11 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     # ------------------------------------------------------------ meta / settings
     SETTING_KEYS = ["base_currency", "review_threshold", "default_account_id", "default_ledger_id",
                     "backup_interval_hours", "backup_keep", "schedule_run_time", "schedule_catchup_days", "timezone",
-                    "lock_reconciled", "receipts_dir", "receipts_pattern"]
+                    "lock_reconciled", "receipts_dir", "receipts_pattern",
+                    "reminder_lead_days", "reminder_notify"]
     SETTING_DEFAULTS = {"schedule_run_time": "00:15", "schedule_catchup_days": "90", "timezone": schedules.DEFAULT_TZ, "lock_reconciled": "0",
-                        "receipts_dir": "", "receipts_pattern": "{yyyy}/{mm}/{dd}"}
+                        "receipts_dir": "", "receipts_pattern": "{yyyy}/{mm}/{dd}",
+                        "reminder_lead_days": "10", "reminder_notify": "off"}
 
     @app.get("/api/meta")
     def meta():
@@ -185,6 +187,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             "currencies": db.all("SELECT * FROM fx_rates ORDER BY currency"),
             "settings": {k: db.get_setting(k, SETTING_DEFAULTS.get(k)) for k in SETTING_KEYS},
             "review_count": db.one("SELECT COUNT(*) n FROM transactions WHERE status='review'")["n"],
+            "reminder_count": reminders.badge(db),
             "has_demo": bool(db.one("SELECT 1 x FROM accounts WHERE is_demo=1 LIMIT 1")),
             "prefs": ledger.get_prefs(db),
             "adj_reasons": [{"code": c, "name": en, "name_zh": zh} for c, en, zh in ledger.ADJ_REASONS],
@@ -295,7 +298,8 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
 
     # ------------------------------------------------------------ accounts
     ACCT_FIELDS = ["group_id", "name", "type", "currency", "opening_balance", "credit_limit", "institution", "last4",
-                   "aliases", "note", "archived", "sort", "opening_returns"]
+                   "aliases", "note", "archived", "sort", "opening_returns",
+                   "stmt_day", "due_day", "due_after_days", "remind_days", "autopay", "min_pay_pct"]
 
     def _acct_data(body: dict, partial=False) -> dict:
         d = {k: body[k] for k in ACCT_FIELDS if k in body}
@@ -313,9 +317,19 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         if not d.get("group_id") and d.get("type"):
             g = db.one("SELECT id FROM account_groups WHERE name=?", (ACCOUNT_TYPES[d["type"]][1],))
             d["group_id"] = g["id"] if g else None
-        for k in ("opening_balance", "credit_limit", "opening_returns"):
+        for k in ("opening_balance", "credit_limit", "opening_returns", "min_pay_pct"):
             if k in d:
                 d[k] = None if d[k] in ("", None) else float(d[k])
+        for k, lo, hi in (("stmt_day", 1, 31), ("due_day", 1, 31), ("due_after_days", 1, 60), ("remind_days", 0, 60)):
+            if k in d:
+                try:
+                    d[k] = None if d[k] in ("", None) else int(d[k])
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"{k} must be a whole number")
+                if d[k] is not None and not lo <= d[k] <= hi:
+                    raise HTTPException(400, f"{k} must be between {lo} and {hi}")
+        if "autopay" in d:
+            d["autopay"] = 1 if d["autopay"] in (True, 1, "1", "true", "on") else 0
         if "opening_balance" in d and d["opening_balance"] is None:
             d["opening_balance"] = 0
         return d
@@ -662,6 +676,56 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             n = con.execute(f"DELETE FROM transactions WHERE id IN ({','.join('?' * len(ids))})", ids).rowcount
         receipts.on_tx_delete(db, ids, keep=bool(body.get("keep_receipts")))
         return {"deleted": n}
+
+    # ------------------------------------------------------------ Reminder Center 提醒中心
+    def _rem(fn):
+        try:
+            return fn()
+        except KeyError:
+            raise HTTPException(404, "Reminder not found")
+        except (reminders.ReminderError, ledger.ValidationError, ValueError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/reminders")
+    def list_reminders(view: str = "open"):
+        return _rem(lambda: reminders.listing(db, view))
+
+    @app.get("/api/reminders/notify")
+    def reminders_notify(days: int = 7, include_overdue: bool = True, lang: str = "auto"):
+        """For iPhone Shortcuts: {count, title, message, items}."""
+        return reminders.digest(db, max(0, min(days, 366)), include_overdue, lang)
+
+    @app.post("/api/reminders/run")
+    def run_reminders():
+        return reminders.run(db, notify=False)
+
+    @app.get("/api/reminders/{rid}")
+    def one_reminder(rid: int):
+        return _rem(lambda: reminders.get(db, rid))
+
+    @app.put("/api/reminders/{rid}")
+    def edit_reminder(rid: int, body: dict = Body(...)):
+        return _rem(lambda: reminders.edit(db, rid, body))
+
+    @app.post("/api/reminders/{rid}/done")
+    def done_reminder(rid: int):
+        return _rem(lambda: reminders.mark_done(db, rid))
+
+    @app.post("/api/reminders/{rid}/paid")
+    def paid_reminder(rid: int, body: dict = Body(default={})):
+        return _rem(lambda: reminders.mark_paid(db, rid, body or {}))
+
+    @app.post("/api/reminders/{rid}/dismiss")
+    def dismiss_reminder(rid: int):
+        return _rem(lambda: reminders.dismiss(db, rid))
+
+    @app.post("/api/reminders/{rid}/reopen")
+    def reopen_reminder(rid: int):
+        return _rem(lambda: reminders.reopen(db, rid))
+
+    @app.post("/api/reminders/{rid}/snooze")
+    def snooze_reminder(rid: int, body: dict = Body(default={})):
+        return _rem(lambda: reminders.snooze(db, rid, (body or {}).get("days"), (body or {}).get("until")))
 
     # ------------------------------------------------------------ receipt photos 小票 (local OCR)
     @app.get("/api/receipts/status")
@@ -1475,6 +1539,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                     log.info("scheduled transactions (startup): %s", r["summary"])
             except Exception:  # noqa: BLE001
                 log.exception("scheduled transactions startup run failed")
+            rem_last = [-1e9]
             while not stop.is_set():
                 try:
                     if schedules.auto_run_due(db):  # daily at schedule_run_time (default 00:15, user's time zone)
@@ -1485,6 +1550,9 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                         bk.upload_latest(db)
                     for mb in ingest.due_mailboxes(db):
                         ingest.poll_mailbox(db, mb, secret)
+                    if time.monotonic() - rem_last[0] > 600:  # reminders: generate + auto-complete (idempotent)
+                        rem_last[0] = time.monotonic()
+                        reminders.run(db)
                 except Exception:  # noqa: BLE001
                     log.exception("background job failed")
                 stop.wait(30)

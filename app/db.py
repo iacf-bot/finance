@@ -334,6 +334,23 @@ class Database:
             acols = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
             if "opening_returns" not in acols:
                 con.execute("ALTER TABLE accounts ADD COLUMN opening_returns REAL")
+            # Reminder Center 提醒中心 (additive): card cycle settings + reminders table
+            acols2 = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
+            for col, ddl in (("stmt_day", "INTEGER"), ("due_day", "INTEGER"), ("due_after_days", "INTEGER"),
+                             ("remind_days", "INTEGER"), ("autopay", "INTEGER DEFAULT 0"), ("min_pay_pct", "REAL")):
+                if col not in acols2:
+                    con.execute(f"ALTER TABLE accounts ADD COLUMN {col} {ddl}")
+            if "lead_days" not in {r[1] for r in con.execute("PRAGMA table_info(schedules)")}:
+                con.execute("ALTER TABLE schedules ADD COLUMN lead_days INTEGER")
+            con.execute("""CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY, kind TEXT NOT NULL, account_id INTEGER, to_account_id INTEGER, schedule_id INTEGER,
+                occurrence_date TEXT, transaction_id INTEGER, title TEXT, cycle_start TEXT, statement_date TEXT,
+                due_date TEXT, amount REAL, amount_override REAL, minimum REAL, currency TEXT, reference TEXT, note TEXT,
+                autopay INTEGER DEFAULT 0, status TEXT NOT NULL DEFAULT 'open', done_reason TEXT, done_at TEXT,
+                snooze_until TEXT, notified_at TEXT, created_at TEXT, updated_at TEXT)""")
+            con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rem_card ON reminders(account_id, statement_date) WHERE kind='card'")
+            con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rem_sched ON reminders(schedule_id, occurrence_date) WHERE kind='schedule'")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_rem_status ON reminders(status, due_date)")
             # receipt photos 小票 (additive): files under the receipts folder, path stored relative to it
             con.execute("""CREATE TABLE IF NOT EXISTS receipts (
                 id INTEGER PRIMARY KEY, transaction_id INTEGER, rel_path TEXT NOT NULL DEFAULT '', orig_name TEXT,
