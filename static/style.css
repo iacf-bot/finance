@@ -228,3 +228,6 @@ table.upcoming td{padding:5px 6px}
 .pr-table tr.pr-acc{cursor:pointer}.pr-table tr.pr-acc:hover{background:var(--hover,#f4f6fa)}
 .pr-table tr.ret-cur td{border-top:1px dashed #d8dce4}
 #prCard h3 .chips{display:inline-flex;flex-wrap:wrap;gap:4px}
+.rc-prev{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}.rc-ph{width:140px;height:180px;border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#f6f8fb;font-size:12px}.rc-ph img{max-width:100%;max-height:100%;object-fit:contain}
+.rc-prog{margin-top:12px}.rc-drop{border:2px dashed #c9d1de;border-radius:12px;padding:26px;text-align:center;color:#5b6475}.rc-drop.on,.qa.drop{border-color:var(--red,#e8553e);background:#fff4f1}
+.rc-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.rc-thumb img{width:72px;height:96px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}

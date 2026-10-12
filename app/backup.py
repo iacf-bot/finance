@@ -27,6 +27,11 @@ def make_backup(db: Database, tag: str = "auto") -> Path:
     with db.lock:
         src.backup(dst)
     dst.close(); src.close()
+    try:  # receipt photos: mirrored into backups/receipts (new/changed files only)
+        from .receipts import backup_copy
+        backup_copy(db, d / "receipts")
+    except Exception:  # noqa: BLE001
+        pass
     prune(db)
     db.set_setting("last_backup_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     return dest

@@ -46,6 +46,17 @@ PRESET_RULES: list[dict[str, Any]] = [
      "note": "中国银行卡/信用卡动账短信或邮件, e.g. 您尾号1234的信用卡…消费人民币35.00元 (best effort)"},
 ]
 
+RULE_KINDS = ("auto", "expense", "income", "refund", "balance")
+# Templates offered in Settings → Parsing rules → "From template" (NOT inserted automatically; saved disabled).
+RULE_TEMPLATES: list[dict[str, Any]] = [
+    {"name": "Statement balance (Total Account Value)", "sender_pattern": "", "subject_pattern": "",
+     "amount_regex": r"Total Account Value\s*\$?([\d,]+\.\d{2})", "merchant_regex": "",
+     "last4_regex": r"Account:\s*X+(\d{4})", "kind": "balance", "adjust_reason": "investment_gain",
+     "currency": "", "enabled": 0, "priority": 20,
+     "note": "Statement/summary email: the amount is the NEW account balance; the difference is recorded as a "
+             "balance adjustment (set-balance). Fill in the sender regex, then enable."},
+]
+
 INCOME_HINTS = ["deposit", "credited", "direct deposit", "payment received", "you received", "refund", "credit posted",
                 "存入", "入账", "收入", "退款", "转入", "到账"]
 REFUND_HINTS = ["refund", "退款", "returned", "credit for return"]
@@ -127,6 +138,8 @@ def apply_rule(rule: dict, text: str) -> dict:
            "last4": _search(rule.get("last4_regex", ""), text), "currency": rule.get("currency") or None}
     kind = rule.get("kind") or "auto"
     out["kind"] = detect_kind(text) if kind == "auto" else kind
+    if out["kind"] == "balance":
+        out["adjust_reason"] = rule.get("adjust_reason") or None
     return out
 
 
@@ -161,6 +174,8 @@ def parse_email(sender: str, subject: str, body: str, rules: list[dict]) -> dict
     gen = generic_extract(text)
     if result is None:
         result = gen
+    elif result["kind"] == "balance":  # statement balance: only the rule's own amount/last4 count
+        pass
     else:  # fill gaps from the generic extractor
         for k in ("amount", "merchant", "last4", "currency"):
             if not result.get(k) and gen.get(k):

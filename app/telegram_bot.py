@@ -84,3 +84,22 @@ def start_if_configured(db: Database) -> TelegramBot | None:
     bot = TelegramBot(db, token, allowed)
     bot.start()
     return bot
+
+
+def notifier():
+    """send(text) -> bool to every TELEGRAM_ALLOWED_CHAT_IDS chat, or None if the bot isn't configured."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chats = [x.strip() for x in os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if x.strip()]
+    if not token or not chats:
+        return None
+
+    def send(text: str) -> bool:
+        ok = False
+        for c in chats:
+            try:
+                r = httpx.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": c, "text": text}, timeout=20)
+                ok = ok or r.status_code == 200
+            except Exception as e:  # noqa: BLE001
+                log.warning("telegram notify failed: %s", e)
+        return ok
+    return send

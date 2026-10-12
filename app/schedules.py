@@ -276,15 +276,22 @@ def save(db: Database, data: dict, sid: int | None = None) -> dict:
         raise ScheduleError("template (the transaction to create) is required")
     rule = normalize_rule(merged)
     post_mode = (merged.get("post_mode") or "post").lower()
-    if post_mode not in ("post", "review"):
-        raise ScheduleError("post_mode must be 'post' or 'review'")
+    if post_mode not in ("post", "review", "remind"):
+        raise ScheduleError("post_mode must be 'post', 'review' or 'remind' (reminder only, no transaction)")
     variable = 1 if merged.get("variable_amount") in (1, True, "1", "true", "on") else 0
     try:
         _validate_template(db, tpl, bool(variable))
     except ledger.ValidationError as e:
         raise ScheduleError(str(e))
     name = (merged.get("name") or "").strip() or _auto_name(db, tpl)
-    row = {**rule, "name": name, "template": json.dumps(tpl, ensure_ascii=False), "post_mode": post_mode,
+    ld = merged.get("lead_days")
+    try:
+        ld = None if ld in (None, "") else int(ld)
+    except (TypeError, ValueError):
+        raise ScheduleError("lead_days must be a whole number")
+    if ld is not None and not 0 <= ld <= 365:
+        raise ScheduleError("lead_days must be between 0 and 365")
+    row = {"lead_days": ld, **rule, "name": name, "template": json.dumps(tpl, ensure_ascii=False), "post_mode": post_mode,
            "variable_amount": variable, "enabled": 0 if merged.get("enabled") in (0, False, "0") else 1,
            "updated_at": now_iso()}
     with db.tx() as con:
@@ -378,7 +385,9 @@ def run(db: Database, as_of: date | str | None = None, dry_run: bool = False, tr
             tpl = json.loads(s["template"])
             done = {r["occurrence_date"] for r in db.all("SELECT occurrence_date FROM schedule_occurrences WHERE schedule_id=?", (s["id"],))}
             sb = _d(s["skip_before"])
-            for d in iter_occurrences(s, as_of):
+            # remind-only schedules surface ahead of time (reminder lead days) so the reminder is useful
+            horizon = as_of + timedelta(days=s["lead_days"] if s["lead_days"] is not None else int(db.get_setting("reminder_lead_days") or 10)) if s["post_mode"] == "remind" else as_of
+            for d in iter_occurrences(s, horizon):
                 ds = d.isoformat()
                 if ds in done or (sb and d < sb):
                     continue
@@ -386,10 +395,11 @@ def run(db: Database, as_of: date | str | None = None, dry_run: bool = False, tr
                     skipped_old += 1
                     continue
                 review = bool(s["variable_amount"]) or s["post_mode"] == "review"
+                remind = s["post_mode"] == "remind"
                 item = {"schedule_id": s["id"], "name": s["name"], "date": f"{ds} {s['time_of_day']}",
-                        "status": "review" if review else "posted"}
+                        "status": "reminder" if remind else "review" if review else "posted"}
                 if not dry_run:
-                    item.update(_generate(db, s, tpl, d, review))
+                    item.update(_remind(db, s, tpl, d) if remind else _generate(db, s, tpl, d, review))
                     if item.get("warning"):
                         errors.append({"schedule_id": s["id"], "date": ds, "error": item["warning"]})
                 items.append(item)
@@ -411,6 +421,18 @@ def run(db: Database, as_of: date | str | None = None, dry_run: bool = False, tr
                 con.execute("INSERT OR REPLACE INTO settings VALUES('schedule_last_auto_run',?)", (as_of.isoformat(),))
     return {"as_of": as_of.isoformat(), "dry_run": dry_run, "generated": generated, "to_review": to_review,
             "skipped_old": skipped_old, "catchup_days": cap, "errors": errors, "items": items, "summary": summary}
+
+
+def _remind(db: Database, s: dict, tpl: dict, d: date) -> dict:
+    """'Remind only' schedules: a Reminder Center item instead of a transaction (idempotent like _generate)."""
+    from .reminders import create_for_schedule
+    with db.tx() as con:
+        if con.execute("SELECT 1 FROM schedule_occurrences WHERE schedule_id=? AND occurrence_date=?", (s["id"], d.isoformat())).fetchone():
+            return {"status": "exists"}
+        rid = create_for_schedule(con, s, tpl, d)
+        con.execute("INSERT INTO schedule_occurrences(schedule_id, occurrence_date, transaction_id) VALUES(?,?,NULL)",
+                    (s["id"], d.isoformat()))
+    return {"reminder_id": rid, "status": "reminder"}
 
 
 def _generate(db: Database, s: dict, tpl: dict, d: date, review: bool) -> dict:

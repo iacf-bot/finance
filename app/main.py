@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import config, demo, importers, ingest, ledger, principal, quotes, reimburse, reconcile, returns, schedules
+from . import config, demo, importers, ingest, ledger, principal, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -164,8 +164,11 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     # ------------------------------------------------------------ meta / settings
     SETTING_KEYS = ["base_currency", "review_threshold", "default_account_id", "default_ledger_id",
                     "backup_interval_hours", "backup_keep", "schedule_run_time", "schedule_catchup_days", "timezone",
-                    "lock_reconciled"]
-    SETTING_DEFAULTS = {"schedule_run_time": "00:15", "schedule_catchup_days": "90", "timezone": schedules.DEFAULT_TZ, "lock_reconciled": "0"}
+                    "lock_reconciled", "receipts_dir", "receipts_pattern",
+                    "reminder_lead_days", "reminder_notify"]
+    SETTING_DEFAULTS = {"schedule_run_time": "00:15", "schedule_catchup_days": "90", "timezone": schedules.DEFAULT_TZ, "lock_reconciled": "0",
+                        "receipts_dir": "", "receipts_pattern": "{yyyy}/{mm}/{dd}",
+                        "reminder_lead_days": "10", "reminder_notify": "off"}
 
     @app.get("/api/meta")
     def meta():
@@ -184,6 +187,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             "currencies": db.all("SELECT * FROM fx_rates ORDER BY currency"),
             "settings": {k: db.get_setting(k, SETTING_DEFAULTS.get(k)) for k in SETTING_KEYS},
             "review_count": db.one("SELECT COUNT(*) n FROM transactions WHERE status='review'")["n"],
+            "reminder_count": reminders.badge(db),
             "has_demo": bool(db.one("SELECT 1 x FROM accounts WHERE is_demo=1 LIMIT 1")),
             "prefs": ledger.get_prefs(db),
             "adj_reasons": [{"code": c, "name": en, "name_zh": zh} for c, en, zh in ledger.ADJ_REASONS],
@@ -234,6 +238,20 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                 if k == "schedule_catchup_days":
                     if not str(v).isdigit() or not 0 <= int(v) <= 3650:
                         raise HTTPException(400, "Catch-up days must be 0–3650")
+                if k == "receipts_pattern":
+                    try:
+                        v = receipts.validate_pattern(str(v or ""))
+                    except receipts.ReceiptError as e:
+                        raise HTTPException(400, str(e))
+                if k == "receipts_dir" and v:
+                    pth = Path(os.path.expanduser(str(v).strip()))
+                    if not pth.is_absolute():
+                        raise HTTPException(400, "Receipts folder must be an absolute path (blank = data/receipts)")
+                    try:
+                        pth.mkdir(parents=True, exist_ok=True)
+                    except OSError as e:
+                        raise HTTPException(400, f"Can't use that folder: {e}")
+                    v = str(pth)
                 if k == "timezone":
                     try:
                         from zoneinfo import ZoneInfo
@@ -280,7 +298,8 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
 
     # ------------------------------------------------------------ accounts
     ACCT_FIELDS = ["group_id", "name", "type", "currency", "opening_balance", "credit_limit", "institution", "last4",
-                   "aliases", "note", "archived", "sort", "opening_returns"]
+                   "aliases", "note", "archived", "sort", "opening_returns",
+                   "stmt_day", "due_day", "due_after_days", "remind_days", "autopay", "min_pay_pct"]
 
     def _acct_data(body: dict, partial=False) -> dict:
         d = {k: body[k] for k in ACCT_FIELDS if k in body}
@@ -298,9 +317,19 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         if not d.get("group_id") and d.get("type"):
             g = db.one("SELECT id FROM account_groups WHERE name=?", (ACCOUNT_TYPES[d["type"]][1],))
             d["group_id"] = g["id"] if g else None
-        for k in ("opening_balance", "credit_limit", "opening_returns"):
+        for k in ("opening_balance", "credit_limit", "opening_returns", "min_pay_pct"):
             if k in d:
                 d[k] = None if d[k] in ("", None) else float(d[k])
+        for k, lo, hi in (("stmt_day", 1, 31), ("due_day", 1, 31), ("due_after_days", 1, 60), ("remind_days", 0, 60)):
+            if k in d:
+                try:
+                    d[k] = None if d[k] in ("", None) else int(d[k])
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"{k} must be a whole number")
+                if d[k] is not None and not lo <= d[k] <= hi:
+                    raise HTTPException(400, f"{k} must be between {lo} and {hi}")
+        if "autopay" in d:
+            d["autopay"] = 1 if d["autopay"] in (True, 1, "1", "true", "on") else 0
         if "opening_balance" in d and d["opening_balance"] is None:
             d["opening_balance"] = 0
         return d
@@ -536,11 +565,14 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     def add_tx(request: Request, body: dict = Body(...)):
         body.setdefault("source", "web" if getattr(request.state, "via", "") == "session" else "api")
         remember = body.pop("remember", False)
+        receipt_ids = [int(i) for i in (body.pop("receipt_ids", None) or [])]
         probe = {"date": str(body.get("date") or "9999").replace("T", " "), "account_id": body.get("account_id"),
                  "to_account_id": body.get("to_account_id"), "kind": body.get("kind")}
         warning = reconcile.edit_warning(db, _recon_points(probe)) if body.get("date") else None
         _recon_guard(warning, body.pop("confirm_reconciled", None))
         tx = ledger.create_tx(db, body)
+        if receipt_ids:
+            tx["receipts"] = receipts.link(db, receipt_ids, tx["id"])
         if warning:
             tx["reconcile_warning"] = warning
         if remember:  # the form asks the server to remember last-used account/category/currency/member per type
@@ -617,12 +649,13 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             t = ledger.update_tx(db, tid, body)
         except KeyError:
             raise HTTPException(404)
+        receipts.relocate_for_tx(db, tid)  # receipt files follow the date/merchant/amount
         if warning:
             t["reconcile_warning"] = warning
         return t
 
     @app.delete("/api/transactions/{tid}")
-    def del_tx(tid: int, confirm_reconciled: bool = False):
+    def del_tx(tid: int, confirm_reconciled: bool = False, keep_receipts: bool = False):
         old = db.one("SELECT * FROM transactions WHERE id=?", (tid,))
         warning = reconcile.edit_warning(db, _recon_points(old))
         _recon_guard(warning, confirm_reconciled)
@@ -631,6 +664,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             con.execute("DELETE FROM transactions WHERE id=?", (tid,))
         if t and t.get("attachment"):
             (data_dir / "attachments" / t["attachment"]).unlink(missing_ok=True)
+        receipts.on_tx_delete(db, [tid], keep=keep_receipts)
         return {"ok": True, **({"reconcile_warning": warning} if warning else {})}
 
     @app.post("/api/transactions/bulk-delete")
@@ -640,15 +674,185 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             return {"deleted": 0}
         with db.tx() as con:
             n = con.execute(f"DELETE FROM transactions WHERE id IN ({','.join('?' * len(ids))})", ids).rowcount
+        receipts.on_tx_delete(db, ids, keep=bool(body.get("keep_receipts")))
         return {"deleted": n}
+
+    # ------------------------------------------------------------ Reminder Center 提醒中心
+    def _rem(fn):
+        try:
+            return fn()
+        except KeyError:
+            raise HTTPException(404, "Reminder not found")
+        except (reminders.ReminderError, ledger.ValidationError, ValueError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/reminders")
+    def list_reminders(view: str = "open"):
+        return _rem(lambda: reminders.listing(db, view))
+
+    @app.get("/api/reminders/notify")
+    def reminders_notify(days: int = 7, include_overdue: bool = True, lang: str = "auto"):
+        """For iPhone Shortcuts: {count, title, message, items}."""
+        return reminders.digest(db, max(0, min(days, 366)), include_overdue, lang)
+
+    @app.post("/api/reminders/run")
+    def run_reminders():
+        return reminders.run(db, notify=False)
+
+    @app.get("/api/reminders/{rid}")
+    def one_reminder(rid: int):
+        return _rem(lambda: reminders.get(db, rid))
+
+    @app.put("/api/reminders/{rid}")
+    def edit_reminder(rid: int, body: dict = Body(...)):
+        return _rem(lambda: reminders.edit(db, rid, body))
+
+    @app.post("/api/reminders/{rid}/done")
+    def done_reminder(rid: int):
+        return _rem(lambda: reminders.mark_done(db, rid))
+
+    @app.post("/api/reminders/{rid}/paid")
+    def paid_reminder(rid: int, body: dict = Body(default={})):
+        return _rem(lambda: reminders.mark_paid(db, rid, body or {}))
+
+    @app.post("/api/reminders/{rid}/dismiss")
+    def dismiss_reminder(rid: int):
+        return _rem(lambda: reminders.dismiss(db, rid))
+
+    @app.post("/api/reminders/{rid}/reopen")
+    def reopen_reminder(rid: int):
+        return _rem(lambda: reminders.reopen(db, rid))
+
+    @app.post("/api/reminders/{rid}/snooze")
+    def snooze_reminder(rid: int, body: dict = Body(default={})):
+        return _rem(lambda: reminders.snooze(db, rid, (body or {}).get("days"), (body or {}).get("until")))
+
+    # ------------------------------------------------------------ receipt photos 小票 (local OCR)
+    @app.get("/api/receipts/status")
+    def receipts_status():
+        return {"ocr": receipts.ocr_status(), "folder": str(receipts.base_dir(db)),
+                "pattern": db.get_setting("receipts_pattern") or receipts.DEFAULT_PATTERN,
+                "max_mb": receipts.MAX_BYTES // 1024 // 1024, "max_files": receipts.MAX_FILES}
+
+    @app.post("/api/receipts")
+    async def upload_receipts(request: Request, auto_post: bool = False, account_id: int | None = None,
+                              ledger_id: int | None = None):
+        """Multipart (file / files fields) or JSON {image|images: base64, filename?, auto_post?, account_id?}.
+        auto_post=false (default): returns a draft for the form; nothing is recorded. auto_post=true: records the
+        transaction (posted if confident, else To review) with the image(s) attached."""
+        items = []
+        ctype = request.headers.get("content-type", "")
+        if ctype.startswith("multipart/"):
+            form = await request.form()
+            for k in ("file", "files", "files[]", "image", "photo"):
+                for f in form.getlist(k):
+                    if hasattr(f, "read"):
+                        items.append((await f.read(receipts.MAX_BYTES + 1), f.filename or ""))
+            auto_post = auto_post or str(form.get("auto_post") or "").lower() in ("1", "true", "yes", "on")
+            account_id = account_id or (int(form.get("account_id")) if str(form.get("account_id") or "").isdigit() else None)
+        else:
+            try:
+                body = await request.json()
+            except Exception:  # noqa: BLE001
+                raise HTTPException(400, "Send multipart/form-data with a 'file' field, or JSON {\"image\": \"<base64>\"}")
+            imgs = body.get("images") or ([body["image"]] if body.get("image") else [])
+            try:
+                items = [(receipts.decode_b64(b), body.get("filename") or "") for b in imgs]
+            except receipts.ReceiptError as e:
+                raise HTTPException(400, str(e))
+            auto_post = auto_post or str(body.get("auto_post") or "").lower() in ("1", "true", "yes")
+            account_id = account_id or body.get("account_id")
+            ledger_id = ledger_id or body.get("ledger_id")
+        if not items:
+            raise HTTPException(400, "No image received (field 'file')")
+        if len(items) > receipts.MAX_FILES:
+            raise HTTPException(400, f"Too many images (max {receipts.MAX_FILES})")
+        receipts.cleanup_drafts(db)
+        saved = []
+        try:
+            for data, name in items:
+                saved.append(receipts.save_upload(db, data, name))
+        except receipts.ReceiptError as e:
+            for r in saved:
+                receipts.delete(db, r["id"])
+            raise HTTPException(400, str(e))
+        # several photos of one receipt: the first with a readable total wins, the rest fill gaps
+        parsed = {}
+        for r in saved:
+            for k, v in (r["parsed"] or {}).items():
+                if parsed.get(k) in (None, [], "") and v not in (None, [], ""):
+                    parsed[k] = v
+        parsed.setdefault("confidence", 0.0)
+        out = {"receipts": [{k: r[k] for k in ("id", "url", "thumb_url", "rel_path", "size", "ocr_confidence")} for r in saved],
+               "receipt_ids": [r["id"] for r in saved], "ocr": receipts.ocr_status(), "parsed": parsed,
+               "ocr_text": "\n---\n".join(r["ocr_text"] or "" for r in saved)[:6000]}
+        out.update(ingest.receipt_draft(db, parsed, account_id))
+        if auto_post:
+            th = float(db.get_setting("review_threshold", "0.75"))
+            d = dict(out["draft"])
+            ok = out["confidence"] >= th and d.get("amount") and d.get("account_id")
+            d.update(status="posted" if ok else "review", source="receipt", confidence=out["confidence"],
+                     raw_text=out["ocr_text"][:4000], ledger_id=int(ledger_id or db.get_setting("default_ledger_id", "1") or 1))
+            if not d.get("date"):
+                d.pop("date")
+            try:
+                tx = ledger.create_tx(db, d)
+            except ledger.ValidationError:
+                d["status"] = "review"
+                tx = ledger.create_tx(db, {**d, "amount": d.get("amount") or 0})
+            receipts.link(db, out["receipt_ids"], tx["id"])
+            out["transaction"] = ledger.get_tx(db, tx["id"])
+            out["status"] = out["transaction"]["status"]
+        else:
+            out["status"] = "draft"
+        zh = bool(re.search(r"[\u3400-\u9fff]", out["ocr_text"] or "")) and not re.search(r"[A-Za-z]{4,}", (out["draft"].get("merchant") or ""))
+        out["message"] = ingest.receipt_message(out, zh)
+        return out
+
+    @app.get("/api/receipts/{rid}")
+    def receipt_info(rid: int):
+        r = receipts.get(db, rid)
+        if not r:
+            raise HTTPException(404, "Receipt not found")
+        return r
+
+    @app.get("/api/receipts/{rid}/image")
+    def receipt_image(rid: int, thumb: bool = False):
+        r = db.one("SELECT rel_path, mime FROM receipts WHERE id=?", (rid,))
+        if not r or not r["rel_path"]:
+            raise HTTPException(404, "Receipt not found")
+        p = receipts.abs_path(db, r["rel_path"])
+        if not p.exists():
+            raise HTTPException(404, "Receipt file missing (receipts folder moved?)")
+        if thumb:
+            return Response(receipts.thumbnail(p), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+        return FileResponse(p, media_type=r["mime"] or "image/jpeg", filename=p.name)
+
+    @app.post("/api/receipts/{rid}/link")
+    def receipt_link(rid: int, body: dict = Body(...)):
+        try:
+            return receipts.link(db, [rid], int(body.get("transaction_id") or 0))
+        except receipts.ReceiptError as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/receipts/{rid}")
+    def receipt_delete(rid: int):
+        receipts.delete(db, rid)
+        return {"ok": True}
+
+    @app.get("/api/transactions/{tid}/receipts")
+    def tx_receipts(tid: int):
+        return receipts.for_tx(db, tid)
 
     @app.post("/api/transactions/{tid}/approve")
     def approve(tid: int, body: dict = Body(default={})):
         body = dict(body or {}); body["status"] = "posted"
         try:
-            return ledger.update_tx(db, tid, body)
+            t = ledger.update_tx(db, tid, body)
         except KeyError:
             raise HTTPException(404)
+        receipts.relocate_for_tx(db, tid)
+        return t
 
     @app.post("/api/transactions/{tid}/attachment")
     async def upload_attachment(tid: int, file: UploadFile = File(...)):
@@ -1113,11 +1317,18 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     # ------------------------------------------------------------ email monitoring
     MB_FIELDS = ["name", "host", "port", "use_ssl", "username", "folder", "interval_minutes", "enabled",
                  "sender_allowlist", "subject_keywords", "after_action", "move_folder", "default_account_id",
-                 "auto_post", "lookback_days"]
+                 "auto_post", "lookback_days", "schedule_mode", "schedule_times", "schedule_weekdays"]
 
     def _mb_public(m: dict) -> dict:
+        from . import mail_schedule as ms
         m = dict(m)
         m["password_set"] = bool(m.pop("password_enc", None))
+        m["schedule_mode"] = m.get("schedule_mode") or "interval"
+        try:
+            m["next_run"], m["schedule_text"] = ms.next_run(db, m), ms.describe(m)
+        except ms.ScheduleError as e:
+            m["next_run"], m["schedule_text"] = None, f"invalid schedule: {e}"
+        m["timezone"] = str(ms.tz(db))
         return m
 
     def _mb_data(body: dict) -> dict:
@@ -1132,9 +1343,35 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             raise HTTPException(400, "after_action: none | mark_read | move")
         if "default_account_id" in d:
             d["default_account_id"] = int(d["default_account_id"]) if d["default_account_id"] else None
+        from . import mail_schedule as ms
+        try:
+            if "schedule_mode" in d:
+                d["schedule_mode"] = (d["schedule_mode"] or "interval").strip()
+                if d["schedule_mode"] not in ms.MODES:
+                    raise ms.ScheduleError("schedule_mode: interval | fixed")
+            if "schedule_times" in d:
+                d["schedule_times"] = ",".join(ms.parse_times(d["schedule_times"]))
+            if "schedule_weekdays" in d:
+                d["schedule_weekdays"] = ",".join(map(str, ms.parse_weekdays(d["schedule_weekdays"])))
+        except ms.ScheduleError as e:
+            raise HTTPException(400, str(e))
         if body.get("password"):
             d["password_enc"] = secret.encrypt(str(body["password"]))
         return d
+
+    def _mb_schedule(before: dict | None, d: dict) -> None:
+        """Validates the merged schedule before saving. Fixed mode needs at least one time; switching to fixed (or
+        changing its times/days) starts counting from now, so earlier slots aren't caught up."""
+        from . import mail_schedule as ms
+        m = {**(before or {}), **d}
+        if (m.get("schedule_mode") or "interval") != "fixed":
+            return
+        if not ms.parse_times(m.get("schedule_times") or ""):
+            raise HTTPException(400, "Fixed times: add at least one time (HH:MM)")
+        keys = ("schedule_mode", "schedule_times", "schedule_weekdays")
+        if not before or any((before.get(k) or "") != (m.get(k) or "") for k in keys):
+            d["schedule_since"] = ms.local_now(db).strftime(ms.FMT)
+            d["last_slot"] = None
 
     @app.get("/api/mailboxes")
     def mailboxes():
@@ -1147,6 +1384,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             if not d.get(k):
                 raise HTTPException(400, f"{k} required")
         d.setdefault("folder", "INBOX")
+        _mb_schedule(None, d)
         with db.tx() as con:
             cols = list(d)
             mid = con.execute(f"INSERT INTO mailboxes({','.join(cols)}) VALUES({','.join('?' * len(cols))})", [d[c] for c in cols]).lastrowid
@@ -1155,6 +1393,10 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     @app.put("/api/mailboxes/{mid}")
     def upd_mailbox(mid: int, body: dict = Body(...)):
         d = _mb_data(body)
+        before = db.one("SELECT * FROM mailboxes WHERE id=?", (mid,))
+        if not before:
+            raise HTTPException(404, "Mailbox not found")
+        _mb_schedule(before, d)
         if d:
             with db.tx() as con:
                 con.execute(f"UPDATE mailboxes SET {','.join(k + '=?' for k in d)} WHERE id=?", list(d.values()) + [mid])
@@ -1206,7 +1448,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             ORDER BY l.id DESC LIMIT ?""", (min(limit, 2000),))
 
     RULE_FIELDS = ["name", "sender_pattern", "subject_pattern", "amount_regex", "merchant_regex", "last4_regex", "kind",
-                   "currency", "enabled", "priority", "note"]
+                   "currency", "enabled", "priority", "note", "adjust_reason"]
 
     def _rule_data(body: dict) -> dict:
         d = {k: body[k] for k in RULE_FIELDS if k in body}
@@ -1216,8 +1458,13 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                     re.compile(d[k])
                 except re.error as e:
                     raise HTTPException(400, f"{k}: invalid regex ({e})")
-        if "kind" in d and d["kind"] not in ("auto", "expense", "income", "refund"):
-            raise HTTPException(400, "kind: auto | expense | income | refund")
+        from .email_rules import RULE_KINDS
+        if "kind" in d and d["kind"] not in RULE_KINDS:
+            raise HTTPException(400, "kind: " + " | ".join(RULE_KINDS))
+        if "adjust_reason" in d:
+            d["adjust_reason"] = (d["adjust_reason"] or "").strip()
+            if d["adjust_reason"] and d["adjust_reason"] not in ledger.REASON_CODES:
+                raise HTTPException(400, f"adjust_reason must be one of {ledger.REASON_CODES} (blank = account default)")
         if "enabled" in d:
             d["enabled"] = 1 if d["enabled"] in (True, 1, "1", "true", "on") else 0
         return d
@@ -1251,6 +1498,11 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             con.execute("DELETE FROM email_rules WHERE id=?", (rid,))
         return {"ok": True}
 
+    @app.get("/api/email-rules/templates")
+    def email_rule_templates():
+        from .email_rules import RULE_TEMPLATES
+        return RULE_TEMPLATES
+
     @app.post("/api/email-rules/test")
     def test_rules(body: dict = Body(...)):
         rules = db.all("SELECT * FROM email_rules WHERE enabled=1")
@@ -1258,6 +1510,8 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             rules = [dict(_rule_data(body["rule"]), id=0, enabled=1, name=body["rule"].get("name") or "test")]
         res = parse_email(body.get("from") or "", body.get("subject") or "", body.get("body") or "", rules)
         res.pop("text", None)
+        if res.get("kind") == "balance":  # preview of the adjustment it would record (no writes)
+            res["balance_preview"] = ingest.balance_plan(db, res, ingest._email_date({"received_at": body.get("received_at")}))
         return res
 
     # ------------------------------------------------------------ demo
@@ -1285,6 +1539,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                     log.info("scheduled transactions (startup): %s", r["summary"])
             except Exception:  # noqa: BLE001
                 log.exception("scheduled transactions startup run failed")
+            rem_last = [-1e9]
             while not stop.is_set():
                 try:
                     if schedules.auto_run_due(db):  # daily at schedule_run_time (default 00:15, user's time zone)
@@ -1295,6 +1550,9 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                         bk.upload_latest(db)
                     for mb in ingest.due_mailboxes(db):
                         ingest.poll_mailbox(db, mb, secret)
+                    if time.monotonic() - rem_last[0] > 600:  # reminders: generate + auto-complete (idempotent)
+                        rem_last[0] = time.monotonic()
+                        reminders.run(db)
                 except Exception:  # noqa: BLE001
                     log.exception("background job failed")
                 stop.wait(30)

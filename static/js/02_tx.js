@@ -156,6 +156,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
   ${isReview ? `<div class="demo-banner" style="background:#fff8e6;border-color:#e4a11b;color:#7a5200">📥 Review item from <b>${esc(t.source)}</b> ${confPill(t.confidence)} — check the fields${unsure.size ? ' (highlighted ones especially)' : ''} and press <b>Approve</b>.${t.raw_text ? `<div class="small mono" style="white-space:pre-wrap;max-height:120px;overflow:auto;margin-top:4px">${esc(t.raw_text.slice(0, 1500))}</div>` : ''}</div>` : ''}
   ${opts.banner ? `<div class="demo-banner prefill-banner"><div>✎ ${opts.banner}${unsure.size ? ' <b>Highlighted fields</b> are guesses — please check them.' : ''}</div></div>` : ''}
   <form id="txForm" class="form" autocomplete="off">
+    ${SCH ? '' : `<div class="f full rc-row"><span>Receipt 小票</span><div class="rc-strip"><span id="rcThumbs">${rcThumbsHtml(opts.receipts)}</span><button type="button" class="btn sm" id="rcBtn" title="Take or choose a receipt photo; ${id ? 'it is attached to this transaction' : 'the form is filled from it'}">📷 ${id ? 'Add photo 添加照片' : 'Fill from photo 拍照识别'}</button></div></div>`}
     <label class="f${U('amount')}"><span>Amount 金额</span><input name="amount" type="number" step="0.01" inputmode="decimal" enterkeyhint="done" value="${(t.orig_currency ? t.orig_amount : t.amount) ?? ''}" ${['buy', 'sell'].includes(t.kind) ? 'readonly' : ''}></label>
     <label class="f${U('currency')}"><span>Currency 币种 <small class="muted" id="curHint"></small></span><select name="currency">${curOptions(t.orig_currency || t.currency || (acctById(t.account_id) || {}).currency || m.settings.base_currency)}</select></label>
     <label class="f${U('account_id')}" data-show="!transfer"><span>Account 账户</span><select name="account_id">${acctOptions(t.account_id)}</select></label>
@@ -257,6 +258,21 @@ async function openTx(id, after, preset = {}, opts = {}) {
   if (!document.getElementById('dlPayer')) document.body.insertAdjacentHTML('beforeend', '<datalist id="dlPayer"></datalist>');
   api('/api/reimbursements?status=all').then(d => { $('#dlPayer').innerHTML = d.payers.map(p => `<option value="${esc(p)}">`).join(''); }).catch(() => {});
   sync();
+  /* receipt photos: new tx = fill the form from OCR and attach on save; existing tx = attach right away */
+  const rcIds = [...(opts.receipt_ids || [])]; let rcCount = (opts.receipts || []).length;
+  if (id && $('#rcThumbs', bg)) api(`/api/transactions/${id}/receipts`).then(l => { rcCount = l.length; $('#rcThumbs', bg).innerHTML = rcThumbsHtml(l); }).catch(() => {});
+  const rcb = $('#rcBtn', bg);
+  if (rcb) rcb.onclick = () => rcPick(async fl => {
+    const res = await rcProcess(fl); if (!res) return;
+    if (id) { const l = await guard(() => Promise.all(res.receipt_ids.map(r => api(`/api/receipts/${r}/link`, {method: 'POST', body: {transaction_id: id}})))); const all = l[l.length - 1] || []; rcCount = all.length; $('#rcThumbs', bg).innerHTML = rcThumbsHtml(all); toast('Photo attached'); return; }
+    rcIds.push(...res.receipt_ids); $('#rcThumbs', bg).insertAdjacentHTML('beforeend', rcThumbsHtml(res.receipts));
+    const d = res.draft || {}, setv = (n, v) => { if (v !== null && v !== undefined && v !== '' && form[n]) { form[n].value = v; form[n].closest('.f') && form[n].closest('.f').classList.add('unsure'); } };
+    setv('amount', d.amount); setv('merchant', d.merchant); if (d.currency) setv('currency', d.currency);
+    if (d.date) setv('date', (d.date.length > 10 ? d.date : d.date + ' 12:00').replace(' ', 'T'));
+    if (d.category_id) setv('category_id', d.category_id); if (d.account_id) setv('account_id', d.account_id);
+    if (!opts.raw_text) opts.raw_text = res.ocr_text;
+    toast(res.message || 'Filled from receipt — please check');
+  });
   const collect = () => {
     const fd = new FormData(form); const o = {kind};
     for (const k of ['amount', 'currency', 'category_id', 'ticker', 'shares', 'price', 'fee', 'merchant', 'member_id', 'project_id', 'ledger_id', 'tags', 'note', 'to_amount']) o[k] = fd.get(k);
@@ -272,6 +288,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
     if (kind === 'expense') { o.reimbursable = form.reimbursable.checked; o.reimb_payer = fd.get('reimb_payer') || null; o.reimb_expected = fd.get('reimb_expected') || null; o.reimb_note = fd.get('reimb_note') || null; }
     if ($('#prWrap', bg).style.display === 'none') delete o.pr_class; else o.pr_class = fd.get('pr_class') || 'auto';
     if (isNew && opts.raw_text) o.raw_text = opts.raw_text;
+    if (isNew && rcIds.length) o.receipt_ids = rcIds;
     return o;
   };
   let saved = 0, busy = false;
@@ -309,7 +326,9 @@ async function openTx(id, after, preset = {}, opts = {}) {
     if (e.ctrlKey || e.metaKey) { e.preventDefault(); save(isReview, isNew); }
     else if (e.target.name === 'amount') { e.preventDefault(); save(isReview); }
   });
-  const del = $('[data-del]', bg); if (del) del.onclick = async () => { if (!await confirmBox('Delete this transaction?')) return; const dr = await reconApi('/api/transactions/' + id, {method: 'DELETE'}); bg.close(); toast(dr.reconcile_warning ? 'Deleted — note: ' + dr.reconcile_warning : 'Deleted'); await loadMeta(); after ? after() : route(); };
+  const del = $('[data-del]', bg); if (del) del.onclick = async () => { if (!await confirmBox('Delete this transaction?')) return;
+    const keep = rcCount ? !(await confirmBox(`Also delete its ${rcCount} receipt photo(s)? Cancel keeps the photos in the receipts folder.`)) : false;
+    const dr = await reconApi('/api/transactions/' + id + (keep ? '?keep_receipts=true' : ''), {method: 'DELETE'}); bg.close(); toast(dr.reconcile_warning ? 'Deleted — note: ' + dr.reconcile_warning : 'Deleted'); await loadMeta(); after ? after() : route(); };
   const rm = $('#rmAtt', bg); if (rm) rm.onclick = async () => { await api(`/api/transactions/${id}/attachment`, {method: 'DELETE'}); rm.parentElement.remove(); };
   const focusEl = unsure.size ? $('.unsure input, .unsure select', form) : form.amount;
   if (focusEl && !matchMedia('(max-width:760px)').matches) setTimeout(() => focusEl.focus(), 30);

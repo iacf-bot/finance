@@ -1,4 +1,4 @@
-# IACF Personal Finance
+# IACF Finance
 
 A self-hosted personal finance app modeled on Suishouji (随手记). It runs as a single FastAPI process with a SQLite
 database and a responsive single-page UI, so it works on a phone too. UI and default categories are bilingual
@@ -548,3 +548,109 @@ API:
 - `GET /api/reimbursements/receipts` and `GET /api/reimbursements/receipts/{id}`.
 - `POST /api/reimbursements/mark` takes `{ids, reimbursable, payer?, expected?, note?}`.
 - `POST /api/reimbursements/{id}/write-off` takes `{undo?}`.
+
+## Email rules: Balance adjust 调整余额 (statement balance)
+- A parsing rule with **Kind = Balance adjust** (`kind: "balance"`) treats the extracted amount as the account's **new balance** (statement value), not a transaction amount.
+- **Account:** matched by the last-4 regex (e.g. `Account: XXXXX1516` → 1516) against the account's last 4 digits.
+- **What gets recorded:** the difference, as a balance adjustment using the same logic as Set balance, dated the email date.
+  - The reason comes from the rule's `adjust_reason`: Gain/loss, Interest, Fees, Unrecorded spending/income, Correction/other, or Opening. Blank means the account default (gain/loss for investment accounts).
+  - The reason flows into principal/returns as usual. For example, gain/loss counts as returns, and correction counts as unexplained.
+- **Nothing recorded:**
+  - When the difference is 0, nothing is recorded and the result is logged as `unchanged`.
+  - An unknown account, or no amount found, is `skipped` and logged.
+  - Duplicate emails (same Message-ID) are ignored.
+- **Review mode:**
+  - Without auto-post, or below the review threshold, the adjustment goes to the review inbox.
+  - An email dated on or before the account's latest reconciliation always goes to review.
+- **Tester:** the rule tester shows the adjustment it would record (`balance_preview`) without writing anything.
+- **Template:** "From template" in Settings → Email Monitoring offers *Statement balance (Total Account Value)*. Templates are never inserted automatically, and they are saved disabled.
+  - `amount_regex`: `Total Account Value\s*\$?([\d,]+\.\d{2})`
+  - `last4_regex`: `Account:\s*X+(\d{4})`
+  - `adjust_reason`: gain/loss
+- **API:** `GET /api/email-rules/templates`. The `adjust_reason` field is on `/api/email-rules`.
+
+## Email monitoring schedule 检查计划
+- Each mailbox polls either **every N minutes** (`schedule_mode: "interval"`, the default; existing mailboxes keep it) or at **fixed times** (`schedule_mode: "fixed"`).
+- **Fixed times:**
+  - `schedule_times` takes one or more `HH:MM` in the app time zone (Settings → `timezone`), e.g. `08:00,21:30`.
+  - `schedule_weekdays` is optional, using 0=Mon … 6=Sun; blank means every day.
+- **Runner:**
+  - It checks every 30 s and polls when a scheduled time arrives.
+  - If the app was down at that time, it runs **once** when it comes back (the latest missed time only).
+  - Each time is claimed atomically (`last_slot`), so it never runs twice.
+  - Switching to fixed times, or changing them, doesn't catch up earlier times.
+  - **Check now** still polls immediately and doesn't affect the schedule.
+- **API:**
+  - `GET /api/mailboxes` adds `schedule_text`, `next_run` (local `YYYY-MM-DD HH:MM`), `timezone`, `last_checked_at` and `last_slot`.
+  - POST and PUT accept `schedule_mode`, `schedule_times` and `schedule_weekdays`.
+
+## Receipt photos 小票 (local OCR)
+- Use **📷** in the quick-add bar (or drop an image on it), or **Fill from photo 拍照识别** in the transaction form. On a phone it can open the camera; on a computer you can pick or drag in several images.
+- The browser shrinks big photos before uploading. The server reads the text with **Tesseract** (eng + chi_sim), and the form opens pre-filled with merchant, date, total, currency and a guessed category/account (quick-add parser + merchant memory). **Nothing is saved until you press Save.**
+- Saved photos are attached to the transaction and show as thumbnails in its detail view. When you delete a transaction, you choose whether its photos are deleted too or kept.
+- **OCR runs only on your machine.** No cloud service is used. Without Tesseract, photos are still stored and you type the details yourself. `GET /api/receipts/status` reports what's available.
+  - Linux: `apt install tesseract-ocr tesseract-ocr-chi-sim`. Windows: see RUN_ON_WINDOWS.md.
+  - HEIC works when `pillow-heif` is installed. Otherwise use JPEG (iPhone: Settings → Camera → Formats → Most Compatible).
+- **How the text is parsed:**
+  - Total: an amount on a TOTAL / Amount Due / Grand Total / 合计 / 实付 / 应付 line, skipping subtotal/tax/tip/change/discount lines. Without such a line, the largest amount is used, at low confidence.
+  - Dates: `2026-10-03`, `2026年10月3日`, `10/03/2026`, `Oct 3, 2026`, plus a time if one is printed.
+  - Merchant: the first meaningful top line.
+  - Currency: from ¥/￥/元/$/€/£.
+  - The response includes a confidence score.
+- **Storage:**
+  - Default layout is `data/receipts/{yyyy}/{mm}/{dd}/YYYYMMDD_HHMMSS_<merchant>_<amount>_<id>.jpg`, using the receipt or transaction date (upload time when no date is found).
+  - In Settings, `receipts_dir` sets the base folder (an absolute path, e.g. a NAS or synced Google Drive folder) and `receipts_pattern` sets the sub-folders, e.g. `{yyyy}/{mm}` or `{yyyy}-{mm}`.
+  - The database stores paths relative to the base folder. When a transaction's date, merchant or amount changes, its files are renamed or moved to match.
+  - Files under the data folder are copied into `backups/receipts` with each backup.
+  - Limits: 15 MB per image, 6 images per receipt. Unconfirmed uploads are removed after 14 days.
+- **API** (`X-API-Key` header):
+  - `POST /api/receipts`: multipart `file` (repeatable), or JSON `{"image": "<base64>", "auto_post": false}`.
+    - `auto_post=false` (default) returns `draft`, `receipt_ids`, `confidence`, `message`.
+    - `auto_post=true` records the transaction, posted when confident or To review otherwise, with the photo attached.
+  - `GET /api/receipts/{id}/image[?thumb=1]`, `POST /api/receipts/{id}/link {"transaction_id"}`, `GET /api/transactions/{id}/receipts`.
+  - `POST /api/transactions` accepts `receipt_ids`. `DELETE /api/transactions/{id}?keep_receipts=true` keeps the photos.
+
+### iPhone Shortcut: photo → transaction
+1. **Take Photo** (or **Select Photos**). Optionally add **Convert Image** to JPEG, plus **Resize Image** to a width of 2000.
+2. **Get Contents of URL**:
+   - URL: `http://<your-server>:8088/api/receipts?auto_post=true`
+   - Method: POST
+   - Headers: `X-API-Key: <your key>`
+   - Request Body: **Form**, with a field `file` of type **File** set to the photo.
+3. **Get Dictionary Value** `message`, then **Show Notification** (or **Speak Text**). You'll see something like "Saved: TEST MART $11.10" or "To review: …".
+
+Leave out `auto_post=true` to get a draft only. To send base64 JSON instead, use **Base64 Encode** → JSON body `{"image": <Base64>}`.
+
+## Reminder Center 提醒中心
+
+* **Credit cards**: in the account form set *Statement day 账单日* and either *Due day 还款日* or *due N days after
+  statement*. Optional: remind days, minimum payment %, autopay. Each closed cycle creates one reminder. It shows the
+  statement date, due date and statement balance (amount owed at the end of the statement day, reconciliation honoured).
+  You can edit the statement amount 账单金额, the minimum and the statement number.
+  The reminder completes itself once transfers into the card after the statement date cover the amount. Until then it
+  shows what is still owed.
+* **Scheduled reminders**: in a schedule pick *When due → Remind only 仅提醒*. Works with one-time (`once`) and
+  recurring schedules. It creates a reminder instead of a transaction. *Paid* can create the transaction from the
+  schedule template.
+* **Lead window**: reminders appear N days before the due date. The default is 10 (*Reminders → Settings*,
+  `reminder_lead_days`). A schedule can override it with *Remind days before*, a card with *Remind days before due*.
+  The *All upcoming* filter shows later items. The nav badge counts overdue items plus items inside their window.
+* Actions: Paid (optionally records the payment transfer), ✓ done, Snooze, ✕ dismiss, Reopen, edit.
+  A background job (about every 10 min) generates and auto-completes reminders. It is idempotent.
+  Optional Telegram push (setting `reminder_notify=telegram`, off by default) sends one message per reminder when it
+  enters its window. Email push isn't implemented.
+* API: `GET /api/reminders?view=open|all_upcoming|later|overdue|snoozed|done|all`, `PUT /api/reminders/{id}`, and
+  `POST /api/reminders/{id}/paid|done|dismiss|snooze|reopen`.
+
+### iPhone Shortcut: daily reminder notification
+
+`GET /api/reminders/notify?days=7&include_overdue=true&lang=auto` (header `X-API-Key`). It returns
+`{count, title, message, items}`, for example `"3 条提醒"` with one line per item: due date, name, amount and ⚠️ if
+overdue. Items are only included inside their lead window.
+
+1. Shortcuts → Automation → **+** → Personal Automation → **Time of Day** (e.g. 09:00, Daily) → Run Immediately.
+2. **Get Contents of URL**: `http://xxx.xxx.xxx.xxx:8088/api/reminders/notify?days=7`, Method GET, Header
+   `X-API-Key: <your key>`.
+3. **Get Dictionary Value** `count` → **If** `count` *is greater than* 0:
+   **Get Dictionary Value** `title` and `message` from the URL contents → **Show Notification** (title, message).
+4. Optional: a second shortcut can call `POST /api/reminders/{id}/done` to tick an item off.

@@ -1008,8 +1008,11 @@ def account_balance_at(db: Database, account_id: int, date: str | None = None) -
 
 def set_balance(db: Database, account_id: int, balance: float, date: str | None = None, note: str | None = None,
                 source: str = "balance_set", ledger_id: int | None = None, as_owed: bool | None = None,
-                reason: str | None = None) -> dict:
+                reason: str | None = None, status: str = "posted", extra: dict | None = None,
+                dry_run: bool = False) -> dict:
     """Record an adjustment so the account's balance as of `date` equals `balance`.
+    status='review' parks it in the review inbox; extra = more transaction fields (external_id, confidence…);
+    dry_run computes the difference without writing.
     For liability accounts `balance` is the amount owed (positive) unless as_owed=False."""
     acct = db.one("SELECT * FROM accounts WHERE id=?", (account_id,))
     if not acct:
@@ -1044,10 +1047,16 @@ def set_balance(db: Database, account_id: int, balance: float, date: str | None 
                     message=f"{word} of {acct['name']} is already {_fmt_amt(balance, acct['currency'])} on {when[:10]}; nothing recorded.")
         return info
     auto = f"{word} set to {_fmt_amt(balance, acct['currency'])} (was {_fmt_amt(shown_before, acct['currency'])}) 余额调整"
+    if dry_run:
+        info.update(created=False, transaction=None, preview=True,
+                    message=f"Would record an adjustment of {diff:+,.2f} {acct['currency']} on {acct['name']} "
+                            f"({reason_label(reason, diff)}): {auto}.")
+        return info
     tx = create_tx(db, {"kind": "adjustment", "amount": diff, "account_id": account_id, "date": when,
                         "note": (note.strip() + " · " + auto) if note and note.strip() else auto, "source": source,
                         "adj_reason": reason,
-                        "ledger_id": ledger_id or int(db.get_setting("default_ledger_id", "1") or 1), "status": "posted"})
+                        "ledger_id": ledger_id or int(db.get_setting("default_ledger_id", "1") or 1), "status": status,
+                        **(extra or {})})
     info.update(created=True, transaction=tx,
                 message=f"Recorded an adjustment of {diff:+,.2f} {acct['currency']} on {acct['name']} "
                         f"({reason_label(reason, diff)}): {auto}.")

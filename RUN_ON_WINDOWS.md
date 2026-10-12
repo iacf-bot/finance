@@ -53,6 +53,10 @@ Double-click **`setup.bat`**, or run `.\setup.ps1`. It:
 * creates a private Python environment in `.venv` and installs `requirements.txt` (takes a few minutes the first time),
 * creates the `data` folder and limits its permissions to you, SYSTEM and Administrators,
 * creates `.env` from `.env.example`. Every setting in it is commented out, which means "use the defaults".
+* checks for **Tesseract OCR** (optional, for receipt photos). To install it, run `winget install UB-Mannheim.TesseractOCR` (or `choco install tesseract`).
+  * For Chinese receipts, copy `chi_sim.traineddata` (from https://github.com/tesseract-ocr/tessdata) into `C:\Program Files\Tesseract-OCR\tessdata`.
+  * The app finds Tesseract in its default folder, or you can set `TESSERACT_CMD` to the full path of `tesseract.exe`.
+  * Without Tesseract, receipt photos are still saved and you type in the details yourself.
 
 ## 5. First run
 
@@ -87,9 +91,9 @@ You can set the same names as Windows environment variables instead. Environment
 2. Allow port 8088 through Windows Firewall **for Tailscale only**. In an **Administrator** PowerShell:
    ```powershell
    New-NetFirewallRule -DisplayName "IACF Finance (Tailscale only)" -Direction Inbound -Action Allow `
-     -Protocol TCP -LocalPort 8088 -RemoteAddress 100.64.0.0/10 -InterfaceAlias "Tailscale" -Profile Any
+     -Protocol TCP -LocalPort 8088 -RemoteAddress xxx.xxx.xxx.xxx/10 -InterfaceAlias "Tailscale" -Profile Any
    ```
-   * `-RemoteAddress 100.64.0.0/10` allows only Tailscale addresses, and `-InterfaceAlias "Tailscale"` allows only the Tailscale network adapter.
+   * `-RemoteAddress xxx.xxx.xxx.xxx/10` allows only Tailscale addresses, and `-InterfaceAlias "Tailscale"` allows only the Tailscale network adapter.
      Check the adapter name with `Get-NetAdapter`. It's normally `Tailscale`.
    * To remove the rule later: `Remove-NetFirewallRule -DisplayName "IACF Finance (Tailscale only)"`
    * If you changed `PORT`, use that number instead of 8088.

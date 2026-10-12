@@ -386,6 +386,86 @@ def _log(db: Database, **kw):
         con.execute("DELETE FROM ingest_log WHERE id NOT IN (SELECT id FROM ingest_log ORDER BY id DESC LIMIT 2000)")
 
 
+def _email_date(msg: dict) -> str | None:
+    if not msg.get("received_at"):
+        return None
+    try:
+        return ledger._norm_date(msg["received_at"])
+    except ledger.ValidationError:
+        try:
+            return email.utils.parsedate_to_datetime(msg["received_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return None
+
+
+def _account_by_last4(db: Database, last4) -> dict | None:
+    if not last4:
+        return None
+    l4 = str(last4)
+    for a in db.all("SELECT * FROM accounts WHERE archived=0 ORDER BY id"):
+        if a.get("last4") and (l4.endswith(str(a["last4"])) or str(a["last4"]).endswith(l4)):
+            return a
+    return None
+
+
+def balance_plan(db: Database, ex: dict, date_s: str | None = None) -> dict:
+    """What a 'balance' rule would do (no writes): the account (by last 4 digits), its balance on the email date,
+    the statement value, the difference and the adjustment reason. Respects reconciliation checkpoints: an email
+    dated on/before the account's latest reconciliation goes to review instead of being posted."""
+    plan = {"kind": "balance", "statement_balance": ex.get("amount"), "last4": ex.get("last4"), "date": date_s}
+    if ex.get("amount") is None:
+        return plan | {"ok": False, "problem": "No statement balance found (amount regex)"}
+    acct = _account_by_last4(db, ex.get("last4"))
+    if not acct:
+        return plan | {"ok": False, "problem": f"No account with last digits {ex.get('last4')}" if ex.get("last4")
+                       else "No account number found (last-4 regex)"}
+    reason = ex.get("adjust_reason") or ledger.default_reason(acct["type"])
+    try:
+        r = ledger.set_balance(db, acct["id"], ex["amount"], date_s, reason=reason, dry_run=True)
+    except ledger.ValidationError as e:
+        return plan | {"ok": False, "problem": str(e), "account_id": acct["id"], "account_name": acct["name"]}
+    from . import reconcile
+    cp = reconcile.latest(db, acct["id"])
+    locked = bool(cp and r["date"] <= str(cp["as_of"])[:16])
+    return plan | {"ok": True, "account_id": acct["id"], "account_name": acct["name"], "currency": acct["currency"],
+                   "date": r["date"], "previous": r["previous"], "difference": r["difference"], "reason": reason,
+                   "reason_label": r["reason_label"], "message": r["message"],
+                   "reconciled_at": str(cp["as_of"]) if cp else None, "before_reconciliation": locked}
+
+
+def _ingest_balance(db: Database, ex: dict, msg: dict, mid: str, logbase: dict, mailbox: dict | None,
+                    auto_post: bool | None, source: str) -> dict:
+    plan = balance_plan(db, ex, _email_date(msg))
+    ex.pop("text", None)
+    if not plan["ok"]:
+        _log(db, **logbase, result="skipped", detail="Balance: " + plan["problem"], rule_name=ex.get("rule_name"))
+        return {"created": False, "result": "skipped", "reason": plan["problem"], "extracted": ex, "balance": plan, "message_id": mid}
+    if abs(plan["difference"]) < 0.005:
+        _log(db, **logbase, result="unchanged", detail=f"Balance of {plan['account_name']} already {plan['statement_balance']:,.2f}; nothing recorded",
+             rule_name=ex.get("rule_name"), confidence=1.0)
+        return {"created": False, "result": "unchanged", "extracted": ex, "balance": plan, "message_id": mid}
+    conf, reasons = 0.8, [f"statement balance {plan['statement_balance']}", f"rule {ex.get('rule_name')}",
+                         f"account by last digits {plan['last4']}", f"difference {plan['difference']:+,.2f}"]
+    if not plan["date"] or not _email_date(msg):
+        conf -= 0.2; reasons.append("no email date: dated now")
+    if plan["before_reconciliation"]:
+        conf = min(conf, 0.5); reasons.append(f"on/before the reconciliation of {plan['reconciled_at'][:10]}: review it")
+    th = float(db.get_setting("review_threshold", "0.75"))
+    if auto_post is None:
+        auto_post = bool((mailbox or {}).get("auto_post"))
+    status = "posted" if (auto_post and conf >= th) else "review"
+    subject = (msg.get("subject") or "").strip()[:150]
+    r = ledger.set_balance(db, plan["account_id"], plan["statement_balance"], plan["date"],
+                           note=f"Statement 对账单: {subject}" if subject else "Statement 对账单", source=source,
+                           reason=plan["reason"], status=status,
+                           extra={"confidence": round(conf, 2), "external_id": mid, "raw_text": (msg.get("body") or "")[:4000]})
+    tx = r["transaction"]
+    _log(db, **logbase, result=status, detail="; ".join(reasons), rule_name=ex.get("rule_name"), confidence=round(conf, 2),
+         transaction_id=tx["id"] if tx else None)
+    return {"created": bool(tx), "result": status, "confidence": round(conf, 2), "reasons": reasons, "extracted": ex,
+            "balance": plan, "transaction": tx}
+
+
 def ingest_email(db: Database, msg: dict, mailbox: dict | None = None, auto_post: bool | None = None,
                  source: str = "email") -> dict:
     """msg: {from, subject, body, received_at, message_id?}. Returns result dict."""
@@ -401,6 +481,8 @@ def ingest_email(db: Database, msg: dict, mailbox: dict | None = None, auto_post
 
     rules = db.all("SELECT * FROM email_rules WHERE enabled=1")
     ex = parse_email(sender, subject, body, rules)
+    if ex.get("kind") == "balance":  # statement balance -> set-balance adjustment
+        return _ingest_balance(db, ex, msg, mid, logbase, mailbox, auto_post, source)
     text = ex["text"]
     if ex.get("amount") is None:
         # maybe a plain "lunch 25 alipay" note mailed to the inbox
@@ -617,16 +699,57 @@ def poll_mailbox(db: Database, mb: dict, secret: SecretBox, max_messages: int = 
     return {"status": status, **stats}
 
 
-def due_mailboxes(db: Database) -> list[dict]:
+def due_mailboxes(db: Database, now: datetime | None = None) -> list[dict]:
+    """Enabled mailboxes due for a check: interval mode = last check older than interval_minutes; fixed mode = the
+    latest scheduled time (app time zone) hasn't run yet (catches up once after downtime). Fixed-time slots are
+    claimed atomically here, so a slot is polled at most once."""
+    from . import mail_schedule as ms
     out = []
-    now = datetime.now()
     for mb in db.all("SELECT * FROM mailboxes WHERE enabled=1"):
-        last = mb.get("last_checked_at")
-        if not last:
-            out.append(mb); continue
         try:
-            if now - datetime.strptime(last, "%Y-%m-%d %H:%M:%S") >= timedelta(minutes=max(1, int(mb.get("interval_minutes") or 15))):
-                out.append(mb)
-        except ValueError:
-            out.append(mb)
+            due, key = ms.is_due(db, mb, now)
+        except ms.ScheduleError:
+            continue
+        if not due:
+            continue
+        if key and not ms.claim(db, mb["id"], key):
+            continue
+        out.append(mb)
     return out
+
+
+# ---------------------------------------------------------------- receipt photos 小票
+def receipt_draft(db: Database, parsed: dict, account_id=None) -> dict:
+    """Draft transaction from parsed receipt fields; category/account guessed by the quick-add parser (merchant
+    memory, keywords, account names in the text). Nothing is saved."""
+    merchant, total = parsed.get("merchant"), parsed.get("total")
+    probe = " ".join(x for x in (merchant, f"{total:.2f}" if total else None) if x) or "receipt"
+    res = parse_quick_add(probe, ledger.parse_ctx(db))
+    draft = {"kind": "expense", "amount": total, "currency": parsed.get("currency"), "merchant": merchant,
+             "date": parsed.get("date"), "category_id": res.category_id,
+             "account_id": int(account_id) if account_id else res.account_id, "note": "Receipt 小票"}
+    if draft["currency"] and draft["account_id"]:
+        acur = (db.one("SELECT currency FROM accounts WHERE id=?", (draft["account_id"],)) or {}).get("currency")
+        if acur == draft["currency"]:
+            draft["currency"] = None  # same as the account: no conversion
+    uncertain = [k for k in ("amount", "merchant", "date", "category_id", "account_id") if not draft.get(k if k != "amount" else "amount")]
+    conf = parsed.get("confidence") or 0.0
+    if res.category_id:
+        conf += 0.05
+    if draft["account_id"]:
+        conf += 0.05
+    return {"draft": draft, "confidence": round(min(conf, 1.0), 2), "uncertain": uncertain}
+
+
+def receipt_message(out: dict, zh: bool = False) -> str:
+    d = out.get("draft") or {}
+    amt = fmt_money(d.get("amount"), d.get("currency") or "") if d.get("amount") is not None else None
+    what = " ".join(x for x in (d.get("merchant"), amt) if x) or ("小票" if zh else "receipt")
+    if out.get("transaction"):
+        st = out["transaction"]["status"]
+        return (f"已记: {what}" if st == "posted" else f"待确认: {what}") if zh else (f"Saved: {what}" if st == "posted" else f"To review: {what}")
+    if not out.get("ocr", {}).get("available"):
+        return "已保存照片 (无 OCR): 请手动填写" if zh else "Photo saved (no OCR on server): fill in the details"
+    if d.get("amount") is None:
+        return "未识别出金额: 请手动填写" if zh else f"Couldn't read the total: check {what}"
+    return f"识别: {what}" if zh else f"Read: {what}"

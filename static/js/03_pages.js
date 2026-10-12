@@ -90,6 +90,12 @@ function acctForm(a) {
    <label class="f" id="brWrap" style="display:none"><span>Reason for difference 差额原因</span><select name="balance_reason">${reasonOptions(defaultReason(a))}</select></label>`}
    <label class="f" data-inv><span>Prior returns in opening balance 期初中的历史收益</span><input name="opening_returns" type="number" step="0.01" value="${a.opening_returns ?? ''}" placeholder="0 = all principal"><span class="small muted">Part of the opening balance that was earlier gains, not money you put in. Default: all principal 本金.</span></label>
    <label class="f" data-cc><span>Credit limit 信用额度</span><input name="credit_limit" type="number" step="0.01" value="${a.credit_limit ?? ''}"></label>
+   <label class="f" data-cc><span>Statement day 账单日 (1–31)</span><input name="stmt_day" type="number" min="1" max="31" value="${a.stmt_day ?? ''}" placeholder="blank = no reminders"></label>
+   <label class="f" data-cc><span>Due day 还款日 (day of month)</span><input name="due_day" type="number" min="1" max="31" value="${a.due_day ?? ''}"></label>
+   <label class="f" data-cc><span>…or due N days after statement 账单后N天</span><input name="due_after_days" type="number" min="1" max="60" value="${a.due_after_days ?? ''}"></label>
+   <label class="f" data-cc><span>Remind days before due 提前提醒天数</span><input name="remind_days" type="number" min="0" max="60" value="${a.remind_days ?? ''}" placeholder="default (Settings, 10)"></label>
+   <label class="f" data-cc><span>Minimum payment % 最低还款</span><input name="min_pay_pct" type="number" step="0.1" value="${a.min_pay_pct ?? ''}"></label>
+   <label class="f" data-cc><span>Autopay 自动还款</span><span><input type="checkbox" name="autopay" ${a.autopay ? 'checked' : ''}> on</span></label>
    <label class="f"><span>Institution 机构</span><input name="institution" value="${esc(a.institution || '')}"></label>
    <label class="f"><span>Last 4 digits 卡号后四位 (matches email alerts)</span><input name="last4" maxlength="5" value="${esc(a.last4 || '')}"></label>
    <label class="f full"><span>Aliases 别名 (comma separated; used by quick-add, e.g. "sapphire, csp, 招行卡")</span><input name="aliases" value="${esc(a.aliases || '')}"></label>
@@ -104,6 +110,7 @@ function acctForm(a) {
   $('[data-x2]', bg).onclick = bg.close;
   $('[data-ok]', bg).onclick = async () => {
     const o = Object.fromEntries(new FormData(f)); o.archived = f.archived && f.archived.checked ? 1 : 0;
+    if (o.type === 'credit_card') o.autopay = f.autopay.checked ? 1 : 0; else ['stmt_day', 'due_day', 'due_after_days', 'remind_days', 'min_pay_pct', 'autopay'].forEach(k => delete o[k]);
     const isDef = f.is_default.checked; delete o.is_default;
     if (isNew) o.opening_balance = (+o.opening_balance || 0) * (liab(o.type) ? -1 : 1);
     else { delete o.opening_balance; const bi = f.balance; if (bi.value === '' || +bi.value === +bi.dataset.orig) { delete o.balance; delete o.balance_reason; } else o.balance = +bi.value; }
@@ -459,7 +466,8 @@ function schedFields(s) {
     <label class="f"><span>Ends 结束</span><select name="s_ends"><option value="never" ${ends === 'never' ? 'selected' : ''}>Never 不结束</option><option value="date" ${ends === 'date' ? 'selected' : ''}>On date 截止日期</option><option value="count" ${ends === 'count' ? 'selected' : ''}>After N times 次数</option></select></label>
     <label class="f" id="sEndD"><span>End date</span><input name="s_end" type="date" value="${esc(s.end_date || '')}"></label>
     <label class="f" id="sEndN"><span>Occurrences 次数</span><input name="s_count" type="number" min="1" value="${s.max_count || 12}"></label>
-    <label class="f"><span>When due 到期时</span><select name="s_post"><option value="post" ${s.post_mode !== 'review' ? 'selected' : ''}>Post automatically 自动入账</option><option value="review" ${s.post_mode === 'review' ? 'selected' : ''}>Create in To review 待确认</option></select></label>
+    <label class="f"><span>When due 到期时</span><select name="s_post"><option value="post" ${s.post_mode !== 'review' ? 'selected' : ''}>Post automatically 自动入账</option><option value="review" ${s.post_mode === 'review' ? 'selected' : ''}>Create in To review 待确认</option><option value="remind" ${s.post_mode === 'remind' ? 'selected' : ''}>Remind only 仅提醒 (no transaction)</option></select></label>
+    <label class="f"><span>Remind days before 提前提醒天数</span><input name="s_lead" type="number" min="0" max="365" value="${s.lead_days ?? ''}" placeholder="default (Settings, 10)"></label>
     <label class="chk full"><input type="checkbox" name="s_var" ${s.variable_amount ? 'checked' : ''}> Variable amount — confirm each time 金额不固定，每次确认 <span class="small muted">(always goes to To review; the amount above is a suggestion)</span></label>
     <div class="full sched-next"><div class="small"><b id="sDesc"></b></div><div class="small muted">Next 5 下次: <span id="sNext">…</span></div><div class="small neg" id="sPast"></div></div>
    </div></fieldset>`;
@@ -471,7 +479,7 @@ function readSched(form) {
     weekdays: $$('[name=s_wd]:checked', form).map(c => +c.value), month_mode: ($('[name=s_mm]:checked', form) || {}).value || 'day',
     month_day: +v('s_mday'), nth: +v('s_nth'), nth_weekday: +v('s_nwd'), start_date: v('s_start'), time_of_day: v('s_time') || '09:00',
     end_date: ends === 'date' ? v('s_end') || null : null, max_count: ends === 'count' ? +v('s_count') || null : null,
-    post_mode: v('s_post'), variable_amount: form.elements.s_var.checked};
+    post_mode: v('s_post'), lead_days: v('s_lead') === '' ? null : +v('s_lead'), variable_amount: form.elements.s_var.checked};
 }
 function bindSchedule(bg, form, SCH, collect, after) {
   let h;
@@ -538,7 +546,7 @@ VIEWS.scheduled = async (v) => {
     <h4 style="margin:10px 0 4px">Run log 运行记录</h4>${d.runs.length ? `<table class="t small"><thead><tr><th>Time</th><th>Trigger</th><th class="right">Created</th><th>Result</th></tr></thead><tbody>${d.runs.slice(0, 6).map(r => `<tr><td class="nowrap">${esc(r.time.slice(5, 16))}</td><td>${esc(r.trigger)}</td><td class="right">${r.generated}</td><td>${esc(r.summary)}${r.errors.length ? `<div class="neg">${r.errors.map(e => esc(e.error)).join('<br>')}</div>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No runs yet</div>'}</div></div>
    <div class="card" style="margin-top:16px"><h3>Scheduled 定时记账 (${d.items.length})<span class="sp"></span><button class="btn sm pri" id="sAdd">+ New schedule</button></h3>
    ${d.items.length ? `<div class="scroll-x"><table class="t resp"><thead><tr><th>Name</th><th>Repeats</th><th>Account</th><th class="right">Amount</th><th>Next</th><th class="right hide-m">Created</th><th></th></tr></thead><tbody>
-   ${d.items.map(s => `<tr class="${s.enabled ? '' : 'paused'}"><td><b>${esc(s.name)}</b><div class="small muted">${esc(kindLabel[s.template.kind] || s.template.kind)}${s.post_mode === 'review' || s.variable_amount ? ' · <span class="pill">to review</span>' : ' · auto-post'}${s.enabled ? '' : ' · <span class="pill warn">paused 已暂停</span>'}${s.finished ? ' · <span class="pill">ended</span>' : ''}</div></td>
+   ${d.items.map(s => `<tr class="${s.enabled ? '' : 'paused'}"><td><b>${esc(s.name)}</b><div class="small muted">${esc(kindLabel[s.template.kind] || s.template.kind)}${s.post_mode === 'remind' ? ' · <span class="pill">⏰ remind only</span>' : s.post_mode === 'review' || s.variable_amount ? ' · <span class="pill">to review</span>' : ' · auto-post'}${s.enabled ? '' : ' · <span class="pill warn">paused 已暂停</span>'}${s.finished ? ' · <span class="pill">ended</span>' : ''}</div></td>
      <td class="small">${esc(s.description)}</td><td class="small">${esc(s.account_name || '')}${s.to_account_name ? ' → ' + esc(s.to_account_name) : ''}</td>
      <td class="right nowrap">${s.template.amount != null ? money(s.template.amount, s.currency) : '<span class="muted">variable</span>'}${s.variable_amount ? '<div class="small muted">variable</div>' : ''}</td>
      <td class="small nowrap">${s.next_dates[0] ? esc(s.next_dates[0]) : '<span class="muted">—</span>'}</td><td class="right small hide-m"><a href="#/transactions/?source=scheduled">${s.generated_count}</a>${s.last_generated ? `<div class="muted">last ${esc(s.last_generated)}</div>` : ''}</td>

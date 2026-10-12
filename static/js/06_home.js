@@ -29,7 +29,9 @@ VIEWS.home = async (v) => {
     <div class="card home-add">
       <form class="qa" id="hqForm" autocomplete="off"><input id="hqInput" enterkeyhint="send" placeholder="记一笔 Quick add: lunch 25.5 chase · 午饭 35 支付宝"><button type="button" class="btn" id="hqFormBtn">✎<span class="hide-s"> Review</span></button><button class="btn pri" id="hqAdd">Add</button></form>
       <button type="button" class="btn" id="hqDetail">+ Detailed 详细记账</button></div>
+    <div id="hmRem"></div>
     <div class="card home-list"><div id="hmList" class="hlist"></div></div></div>`;
+  api('/api/reminders?view=open').then(d => { if (d.items.length) $('#hmRem').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><b>⏰ Reminders 提醒</b><a href="#/reminders" class="small">All 全部 ›</a></div>${d.items.slice(0, 5).map(remLine).join('')}</div>`; }).catch(() => {});
   const go = m => { S.homeMonth = m === thisMonth() ? null : m; route(); };
   api(`/api/summary/month?month=${month}${lq}`).then(s => {
     $('#hmPrev').onclick = () => go(s.prev); $('#hmNext').onclick = () => go(s.next);
