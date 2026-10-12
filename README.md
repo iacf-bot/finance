@@ -1,4 +1,4 @@
-# IACF Finance
+# IACF Personal Finance
 
 A self-hosted personal finance app modeled on Suishouji (随手记). It runs as a single FastAPI process with a SQLite
 database and a responsive single-page UI, so it works on a phone too. UI and default categories are bilingual
