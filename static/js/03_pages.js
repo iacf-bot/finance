@@ -10,9 +10,19 @@ function acctRow(a) {
       <span class="small muted">${esc(a.type_label)} · ${a.currency}${a.aliases ? ' · aliases: ' + esc(a.aliases) : ''}${a.archived ? ' · archived' : ''}</span>
       ${a.reconciled_at ? `<div class="small"><a class="rec-link" href="javascript:void 0" data-rhist="${a.id}" title="Reconciliation history 对账记录">✔ Reconciled 已对账 ${esc(a.reconciled_at.slice(0, 10))}${a.reconciliation_count > 1 ? ` · ${a.reconciliation_count}×` : ''}</a></div>` : ''}
       ${a.type === 'credit_card' && a.credit_limit ? `<div class="small muted">Owed 欠款 ${money(a.owed, a.currency)} · Limit ${money(a.credit_limit, a.currency)} · Available ${money(a.available_credit, a.currency)}</div><div class="bar" style="max-width:260px"><i class="${a.owed / a.credit_limit > .8 ? 'over' : a.owed / a.credit_limit > .5 ? 'warn' : ''}" style="width:${Math.max(0, Math.min(100, a.owed / a.credit_limit * 100))}%"></i></div>` : ''}
-      ${a.is_investment ? `<div class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</div>` : ''}</div>
+      ${a.is_investment ? `<div class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</div>` : ''}
+      ${a.invest && showPR() ? `<div class="small pr-line">${prLine(a.invest)}</div>` : ''}</div>
       <div class="bal ${a.is_liability ? (a.owed > 0 ? 'neg' : zero ? '' : 'pos') : a.balance < 0 ? 'neg' : ''}">${a.is_liability ? `<span class="small muted">${a.owed >= 0 ? 'owed 欠' : 'credit 溢缴'} </span>${money(Math.abs(a.owed), a.currency)}` : money(a.balance, a.currency)}${a.currency !== S.meta.settings.base_currency ? `<div class="small muted">${money(a.balance_base)}</div>` : ''}</div>
       <div class="row acts" style="flex-wrap:nowrap"><a class="btn sm" href="#/account/${a.id}" title="Account history 账户明细">📜 <span class="hide-m">History 明细</span></a><button class="btn sm" data-adj="${a.id}" title="Enter the real balance; an adjustment transaction records the difference">⚖️ <span class="hide-m">Set balance 调整余额</span></button><button class="btn sm" data-rec="${a.id}" title="Compare with a statement and lock the balance at that date">✔ <span class="hide-m">Reconcile 对账</span></button><button class="btn sm" data-edit="${a.id}">Edit</button></div></div>`;
+}
+/* principal / returns line for investment accounts and groups (toggle: Accounts → "Principal & returns") */
+const PR_KEY = 'acctShowPR';
+const showPR = () => localStorage.getItem(PR_KEY) !== '0';
+function pctTxt(p) { return p === null || p === undefined ? '' : ` (${p >= 0 ? '+' : ''}${p.toFixed(1)}%)`; }
+function prLine(x) {
+  const r = x.returns;
+  return `Principal 本金 ${money(x.principal, x.currency)} · Returns 收益 <span class="${r < 0 ? 'neg' : r > 0 ? 'pos' : ''}">${r >= 0 ? '+' : '−'}${money(Math.abs(r), x.currency)}${pctTxt(x.returns_pct)}</span>`
+    + (Math.abs(x.unexplained || 0) >= 0.01 ? ` · <span class="muted" title="Value − principal − returns: unclassified corrections / reconciliation differences">unexplained 未解释 ${money(x.unexplained, x.currency)}</span>` : '');
 }
 function groupTotal(n) {
   const base = n.currency;
@@ -20,7 +30,8 @@ function groupTotal(n) {
     ? `<span class="small muted">${n.owed_base >= 0 ? 'owed 欠' : 'credit 溢缴'} </span><span class="${n.owed_base > 0 ? 'neg' : ''}">${money(Math.abs(n.owed_base), base)}</span>`
     : `<span class="${n.total_base < 0 ? 'neg' : ''}">${money(n.total_base, base)}</span>`;
   const subs = n.by_currency.map(c => `${c.currency} ${num(n.liability_group ? -c.total : c.total)}${c.currency !== base ? ` ≈ ${money(n.liability_group ? -c.total_base : c.total_base, base)}` : ''}`);
-  return `<div class="gt-main" title="${esc((n.liability_group ? 'Owed by currency: ' : 'By currency: ') + subs.join(' · '))}">${main}</div>${n.mixed_currency ? `<div class="small muted gt-sub">${esc(subs.join(' · '))}</div>` : ''}`;
+  const pr = n.invest && showPR() ? `<div class="small pr-line gt-sub">${prLine(n.invest)}</div>` : '';
+  return pr + `<div class="gt-main" title="${esc((n.liability_group ? 'Owed by currency: ' : 'By currency: ') + subs.join(' · '))}">${main}</div>${n.mixed_currency ? `<div class="small muted gt-sub">${esc(subs.join(' · '))}</div>` : ''}`;
 }
 function treeNode(n, byId, depth = 0) {
   const collapsed = !!treeState()[nodeKey(n)];
@@ -48,6 +59,7 @@ VIEWS.accounts = async (v) => {
   <div class="card" style="margin-top:16px"><h3 class="tree-h">Accounts 账户<span class="sp"></span>
     <button class="btn sm" id="expAll">▾ Expand all</button><button class="btn sm" id="colAll">▸ Collapse all</button>
     <label class="chk small"><input type="checkbox" id="hideZero" ${localStorage.getItem(ZERO_KEY) === '1' ? 'checked' : ''}> hide zero balances</label>
+    <label class="chk small"><input type="checkbox" id="showPR" ${showPR() ? 'checked' : ''}> principal &amp; returns 本金/收益</label>
     <label class="chk small"><input type="checkbox" id="showArch" ${localStorage.getItem(ARCH_KEY) === '1' ? 'checked' : ''}> show archived</label>
     <button class="btn sm" id="grpBtn">Groups 分组</button><button class="btn sm pri" id="addAcct">+ Add account</button></h3>
   ${!d.accounts.length ? '<div class="empty">No accounts yet. Add your bank accounts, cards, e-wallets, brokerage accounts, loans…</div>' : ''}
@@ -58,6 +70,7 @@ VIEWS.accounts = async (v) => {
   const all = c => { $$('.tnode').forEach(n => { n.classList.toggle('collapsed', c); const g = $('.tgroup', n); g.setAttribute('aria-expanded', !c); $('.chev', g).textContent = c ? '▸' : '▾'; setCollapsed(n.dataset.node, c); }); };
   $('#expAll').onclick = () => all(false); $('#colAll').onclick = () => all(true);
   $('#hideZero').onchange = e => { localStorage.setItem(ZERO_KEY, e.target.checked ? '1' : '0'); applyAcctFilters(); };
+  $('#showPR').onchange = e => { localStorage.setItem(PR_KEY, e.target.checked ? '1' : '0'); route(); };
   $('#showArch').onchange = e => { localStorage.setItem(ARCH_KEY, e.target.checked ? '1' : '0'); applyAcctFilters(); };
   applyAcctFilters();
   $('#addAcct').onclick = () => acctForm();
@@ -80,6 +93,7 @@ function acctForm(a) {
    <label class="f"><span>Start date 开始日期 (opening balance is recorded on this day)</span><input name="start_date" type="date" value="${today()}"></label>`
    : `<label class="f"><span>${liab(a.type) ? 'Amount owed now 当前欠款' : 'Current balance 当前余额'}</span><input name="balance" type="number" step="0.01" value="${liab(a.type) ? a.owed : a.balance}" data-orig="${liab(a.type) ? a.owed : a.balance}"><span class="small muted">Changing this records a balance-adjustment transaction for the difference (like 随手记 余额变更).${a.opening_balance ? ` Legacy opening balance field: ${money(a.opening_balance, a.currency)}.` : ''}</span></label>
    <label class="f" id="brWrap" style="display:none"><span>Reason for difference 差额原因</span><select name="balance_reason">${reasonOptions(defaultReason(a))}</select></label>`}
+   <label class="f" data-inv><span>Prior returns in opening balance 期初中的历史收益</span><input name="opening_returns" type="number" step="0.01" value="${a.opening_returns ?? ''}" placeholder="0 = all principal"><span class="small muted">Part of the opening balance that was earlier gains, not money you put in. Default: all principal 本金.</span></label>
    <label class="f" data-cc><span>Credit limit 信用额度</span><input name="credit_limit" type="number" step="0.01" value="${a.credit_limit ?? ''}"></label>
    <label class="f"><span>Institution 机构</span><input name="institution" value="${esc(a.institution || '')}"></label>
    <label class="f"><span>Last 4 digits 卡号后四位 (matches email alerts)</span><input name="last4" maxlength="5" value="${esc(a.last4 || '')}"></label>
@@ -89,7 +103,7 @@ function acctForm(a) {
    <label class="chk"><input type="checkbox" name="is_default" ${S.meta.settings.default_account_id == a.id && a.id ? 'checked' : ''}> Default account for quick-add</label>
   </form>`, {buttons: `${isNew ? '' : '<button class="btn danger" data-del>Delete</button><span class="sp"></span>'}<button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok>Save</button>`});
   const f = $('#af', bg);
-  const upd = () => { const l = liab(f.type.value); if ($('#obLbl', bg)) $('#obLbl', bg).textContent = l ? 'Amount owed at start 期初欠款' : 'Opening balance 期初余额'; $('[data-cc]', bg).style.display = f.type.value === 'credit_card' ? '' : 'none'; };
+  const upd = () => { const l = liab(f.type.value); if ($('#obLbl', bg)) $('#obLbl', bg).textContent = l ? 'Amount owed at start 期初欠款' : 'Opening balance 期初余额'; $('[data-cc]', bg).style.display = f.type.value === 'credit_card' ? '' : 'none'; $('[data-inv]', bg).style.display = isInvType(f.type.value) ? '' : 'none'; };
   f.type.onchange = upd; upd();
   if (f.balance) f.balance.oninput = () => { $('#brWrap', bg).style.display = f.balance.value !== '' && +f.balance.value !== +f.balance.dataset.orig ? '' : 'none'; };
   $('[data-x2]', bg).onclick = bg.close;
@@ -99,6 +113,7 @@ function acctForm(a) {
     if (isNew) o.opening_balance = (+o.opening_balance || 0) * (liab(o.type) ? -1 : 1);
     else { delete o.opening_balance; const bi = f.balance; if (bi.value === '' || +bi.value === +bi.dataset.orig) { delete o.balance; delete o.balance_reason; } else o.balance = +bi.value; }
     if (!o.group_id) delete o.group_id;
+    if (!isInvType(o.type)) delete o.opening_returns; else if (o.opening_returns === '') o.opening_returns = null;
     const r = await guard(() => api(isNew ? '/api/accounts' : '/api/accounts/' + a.id, {method: isNew ? 'POST' : 'PUT', body: o}));
     if (isDef) await api('/api/settings', {method: 'PUT', body: {default_account_id: r.id}});
     else if (S.meta.settings.default_account_id == r.id) await api('/api/settings', {method: 'PUT', body: {default_account_id: ''}});
@@ -316,10 +331,10 @@ async function renderReturns() {
 }
 
 /* one-time tool: classify old (e.g. 随手记 余额变更) adjustments — preview first, nothing changes until Apply */
-async function reclassifyTool(includeSavings = false) {
-  const d = await guard(() => api('/api/adjustments/reclassify?include_savings=' + (includeSavings ? 1 : 0)));
+async function reclassifyTool(includeSavings = false, accountIds = null) {
+  const d = await guard(() => api('/api/adjustments/reclassify?include_savings=' + (includeSavings ? 1 : 0) + (accountIds ? `&only=1&account_ids=${accountIds.join(',')}` : '')));
   const cnt = d.by_proposed_reason;
-  const bg = modal('Reclassify adjustments 重新分类余额调整', `<p class="muted" style="margin-top:0">Unclassified balance adjustments (e.g. imported 随手记 <b>余额变更</b>) on investment-type accounts${includeSavings ? ' and savings accounts' : ''}, with a proposed <b>reason for difference 差额原因</b>. This is a <b>preview</b>: nothing changes until you press <b>Apply</b> (a backup is taken first). An account's first record is proposed as <i>Opening balance</i>, because exports don't include starting balances.</p>
+  const bg = modal('Reclassify adjustments 重新分类余额调整', `<p class="muted" style="margin-top:0">Unclassified balance adjustments (e.g. imported 随手记 <b>余额变更</b>) on ${accountIds ? 'this account' : `investment-type accounts${includeSavings ? ' and savings accounts' : ''}`}, with a proposed <b>reason for difference 差额原因</b>. This is a <b>preview</b>: nothing changes until you press <b>Apply</b> (a backup is taken first). An account's first record is proposed as <i>Opening balance</i>, because exports don't include starting balances.</p>
     <div class="row" style="margin-bottom:8px"><label class="chk"><input type="checkbox" id="rcSav" ${includeSavings ? 'checked' : ''}> include savings accounts (propose Interest 利息)</label><span class="sp"></span><label class="chk"><input type="checkbox" id="rcAll" checked> select all</label></div>
     <div class="small" style="margin-bottom:8px"><b>${d.count}</b> adjustments on ${d.accounts} accounts · proposed: ${Object.entries(cnt).map(([k, n]) => `${esc((S.meta.adj_reasons.find(r => r.code === k) || {}).name || k)} ${n}`).join(' · ') || '—'}</div>
     ${d.rows.length ? `<div class="scroll-x" style="max-height:52vh;overflow:auto"><table class="t"><thead><tr><th></th><th>Date</th><th>Account</th><th class="right">Amount</th><th>Reason 差额原因</th><th>Why</th></tr></thead><tbody>
@@ -329,7 +344,7 @@ async function reclassifyTool(includeSavings = false) {
   const upd = () => { const n = $$('[data-rc]:checked', bg).length; const b = $('[data-ok]', bg); b.textContent = `Apply to ${n} selected`; b.disabled = !n; };
   $$('[data-rc]', bg).forEach(c => c.onchange = upd); upd();
   $('#rcAll', bg).onchange = e => { $$('[data-rc]', bg).forEach(c => c.checked = e.target.checked); upd(); };
-  $('#rcSav', bg).onchange = e => { bg.close(); reclassifyTool(e.target.checked); };
+  $('#rcSav', bg).onchange = e => { bg.close(); reclassifyTool(e.target.checked, accountIds); };
   $('[data-x2]', bg).onclick = bg.close;
   $('[data-ok]', bg).onclick = async () => {
     const items = $$('[data-rc]:checked', bg).map(c => ({id: +c.dataset.rc, reason: $(`[data-rr="${c.dataset.rc}"]`, bg).value}));
@@ -408,7 +423,7 @@ function previewText(r) {
 async function doQuickAdd(text, review = false) {
   if (!text.trim()) return;
   const r = await guard(() => api('/api/quick-add', {method: 'POST', body: {text, source: 'web', review}}));
-  if (r.action === 'set_balance') { toast(r.message); await loadMeta(); return r; }
+  if (r.action === 'set_balance' || r.action === 'reconcile') { toast(r.detail || r.message); await loadMeta(); return r; }
   toast(r.status === 'posted' ? `✓ Recorded ${r.transaction.amount} ${r.transaction.currency} (${Math.round(r.confidence * 100)}%)` : `📥 Sent to review (confidence ${Math.round(r.confidence * 100)}%)`);
   await loadMeta();
   return r;

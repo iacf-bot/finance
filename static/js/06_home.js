@@ -67,14 +67,14 @@ VIEWS.home = async (v) => {
 
 /* ---------- Account detail / history 账户明细 (#/account/<id>) ---------- */
 S.acctHist = {};
-const PERIODS = [['1M', '1M'], ['3M', '3M'], ['6M', '6M'], ['1Y', '1Y'], ['YTD', 'YTD'], ['ALL', 'All 全部'], ['CUSTOM', 'Custom 自定义']];
+const PERIODS = [['1M', '1M'], ['3M', '3M'], ['6M', '6M'], ['YTD', 'YTD'], ['1Y', '1Y'], ['3Y', '3Y'], ['ALL', 'All 全部'], ['CUSTOM', 'Custom 自定义']];
 VIEWS.account = async (v, rest) => {
   const id = parseInt(rest[0]);
   if (!id) { location.hash = '#/accounts'; return; }
   const st = S.acctHist[id] = S.acctHist[id] || {period: '1M'};
   const meta = acctById(id);
   if (meta) $('#title').textContent = meta.name;
-  v.innerHTML = `<div class="acct-head card" id="ahHead"><div class="empty">Loading…</div></div>
+  v.innerHTML = `<div class="acct-head card" id="ahHead"><div class="empty">Loading…</div></div><div id="ahInv"></div>
    <div class="card" style="margin-top:12px"><form id="ahFlt" class="ah-flt" autocomplete="off">
      <div class="chips" role="group" aria-label="Period">${PERIODS.map(([k, l]) => `<button type="button" class="chip${st.period === k ? ' on' : ''}" data-p="${k}">${l}</button>`).join('')}</div>
      <span class="ah-custom"${st.period === 'CUSTOM' ? '' : ' hidden'}><input type="date" name="start" value="${esc(st.start || '')}" aria-label="From"> – <input type="date" name="end" value="${esc(st.end || '')}" aria-label="To"></span>
@@ -113,20 +113,21 @@ VIEWS.account = async (v, rest) => {
     $('#ahSum').innerHTML = `<span>${esc(lbl)}</span><span>${owed ? 'Owed' : 'Balance'} at start 期初 <b>${money(b.opening, a.currency)}</b> → end 期末 <b>${money(b.closing, a.currency)}</b></span>
       <span>In 流入 <b class="pos">+${num(b.inflow)}</b></span><span>Out 流出 <b class="neg">−${num(b.outflow)}</b></span><span>${h.total} transactions 笔${st.q || st.category_id ? ' (filtered)' : ''}</span>
       ${h.cash_only ? '<span class="muted">Running balance = cash part (holdings excluded)</span>' : ''}`;
+    if (h.invest) invSection(h, a, id); else $('#ahInv').innerHTML = '';
   };
   const list = $('#ahList');
   const balHdr = () => A && A.is_liability ? 'Owed 欠款' : A && A.is_investment ? 'Cash 现金' : 'Balance 余额';
   const rowHtml = t => `<tr data-tx="${t.id}" style="cursor:pointer"><td class="nowrap small">${esc(t.date.slice(0, 10))}<div class="muted hide-m">${esc(t.date.slice(11, 16))}</div></td>
     <td><div class="ah-det"><span class="hico-s" aria-hidden="true">${catIcon(t)}</span><div>${t.reconciled_id ? '<span class="rec-badge" title="Reconciled 已对账">✔🔒</span> ' : ''}${txDesc(t)}</div></div></td>
-    <td class="right nowrap ${t.account_effect < 0 ? 'neg' : t.account_effect > 0 ? 'pos' : ''}">${t.account_effect > 0 ? '+' : t.account_effect < 0 ? '−' : ''}${money(Math.abs(t.account_effect), A ? A.currency : undefined)}</td>
-    <td class="right nowrap rb">${t.running_shown === null || t.running_shown === undefined ? '—' : money(t.running_shown, A ? A.currency : undefined)}</td></tr>`;
-  const NEXT = {'1M': '3M', '3M': '6M', '6M': '1Y', '1Y': 'ALL', 'YTD': 'ALL', 'CUSTOM': 'ALL'};
+    <td class="right nowrap ${t.account_effect < 0 ? 'neg' : t.account_effect > 0 ? 'pos' : ''}">${t.account_effect > 0 ? '+' : t.account_effect < 0 ? '−' : ''}${money(Math.abs(t.account_effect), A ? A.currency : undefined)}${t.pr_badge ? `<div><span class="pr-badge pr-${t.pr_class}" title="${esc(t.pr_label || '')}">${t.pr_badge}</span></div>` : ''}</td>
+    <td class="right nowrap rb">${t.running_shown === null || t.running_shown === undefined ? '—' : money(t.running_shown, A ? A.currency : undefined)}</td>${A && A.is_investment ? `<td class="right nowrap prc">${t.running_principal === undefined ? '—' : money(t.running_principal, A.currency)}</td><td class="right nowrap prc">${t.running_returns === undefined ? '—' : money(t.running_returns, A.currency)}</td>` : ''}</tr>`;
+  const NEXT = {'1M': '3M', '3M': '6M', '6M': '1Y', '1Y': '3Y', '3Y': 'ALL', 'YTD': 'ALL', 'CUSTOM': 'ALL'};
   const inf = infiniteList(list, {
     load: cursor => { const p = params(); if (cursor) p.set('before', cursor); return api(`/api/accounts/${id}/history?` + p); },
     append: (h, first) => {
       if (first) {
         head(h);
-        list.innerHTML = h.items.length ? `<div class="scroll-x"><table class="t ah-table"><thead><tr><th>Date</th><th>Details</th><th class="right">Amount</th><th class="right">${balHdr()}</th></tr></thead><tbody id="ahBody"></tbody></table></div>`
+        list.innerHTML = h.items.length ? `<div class="scroll-x"><table class="t ah-table"><thead><tr><th>Date</th><th>Details</th><th class="right">Amount</th><th class="right">${balHdr()}</th>${A && A.is_investment ? '<th class="right prc">Principal 本金</th><th class="right prc">Returns 收益</th>' : ''}</tr></thead><tbody id="ahBody"></tbody></table></div>`
           : `<div class="empty">No transactions in this period${st.q || st.category_id ? ' matching the filter' : ''}.</div>`;
       }
       if (h.items.length) { $('#ahBody').insertAdjacentHTML('beforeend', h.items.map(rowHtml).join('')); bindTxRows(list, after); }
@@ -135,3 +136,53 @@ VIEWS.account = async (v, rest) => {
   });
   inf.foot.addEventListener('click', e => { if (e.target.closest('[data-older]')) { st.period = NEXT[st.period] || 'ALL'; route(); } });
 };
+
+/* investment accounts: principal 本金投入 vs returns 投资收益 (cards, period figures, chart following the period filter) */
+const sgn = (v, cur) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${money(Math.abs(v), cur)}`;
+const pctS = p => p === null || p === undefined ? '—' : `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`;
+function invSection(h, a, id) {
+  const x = h.invest, p = x.period, cur = a.currency;
+  const box = $('#ahInv');
+  box.innerHTML = `<div class="card inv-card" style="margin-top:12px">
+    <div class="inv-cards">
+      <div class="ic"><div class="lbl">Current value 当前市值</div><div class="val">${money(x.value, cur)}</div></div>
+      <div class="ic"><div class="lbl">Principal 本金投入</div><div class="val">${money(x.principal, cur)}</div><div class="small muted">net contributions 净投入</div></div>
+      <div class="ic"><div class="lbl">Returns 投资收益</div><div class="val ${x.returns < 0 ? 'neg' : x.returns > 0 ? 'pos' : ''}">${sgn(x.returns, cur)}</div><div class="small ${x.returns < 0 ? 'neg' : 'pos'}">${pctS(x.returns_pct)} of principal</div></div>
+    </div>
+    ${Math.abs(x.unexplained) >= 0.01 ? `<div class="small inv-unexp">Unexplained difference 未解释差额 <b>${sgn(x.unexplained, cur)}</b> — value ≠ principal + returns (unclassified corrections ${money(x.unclassified_corrections, cur)}, the rest from reconciliation differences).</div>` : ''}
+    ${x.correction_count ? `<div class="inv-hint">⚠️ <b>${x.correction_count}</b> balance adjustment${x.correction_count > 1 ? 's' : ''} on this account ${x.correction_count > 1 ? 'are' : 'is'} still unclassified (Correction/other 校正/其他), so ${x.correction_count > 1 ? 'they count' : 'it counts'} as unexplained, not as returns. <button class="btn sm" id="ahReclass">🏷 Reclassify 重新分类…</button></div>` : ''}
+    ${x.opening_returns ? `<div class="small muted">Opening balance ${money(x.opening_total, cur)}: ${money(x.opening_total - x.opening_returns, cur)} principal + ${money(x.opening_returns, cur)} prior returns.</div>` : ''}
+    <div class="inv-period small" id="ahInvSum"></div>
+    <div class="row inv-ctl"><b class="small">Principal vs value 本金 vs 市值</b><span class="sp"></span>
+      <label class="small muted">Granularity <select id="ahIv" style="width:auto"><option value="auto">Auto</option><option value="day">Daily 日</option><option value="week">Weekly 周</option><option value="month">Monthly 月</option></select></label></div>
+    <div style="height:240px"><canvas id="ahInvChart"></canvas></div>
+    <div class="small muted" style="margin-top:6px">Gap between value and principal = returns (+ any unexplained difference). Click legend items to hide/show lines. ${esc(x.running_note || '')}</div>
+  </div>`;
+  if ($('#ahReclass')) $('#ahReclass').onclick = () => reclassifyTool(false, [id]);
+  const L = $('#ahList'), key = 'ahShowPR';
+  L.classList.toggle('show-pr', localStorage.getItem(key) === '1');
+  $('#ahSum').insertAdjacentHTML('beforeend', `<button type="button" class="btn sm pr-tog" id="ahPrTog">${L.classList.contains('show-pr') ? 'Hide' : 'Show'} 本金/收益 columns</button>`);
+  $('#ahPrTog').onclick = e => { const on = L.classList.toggle('show-pr'); localStorage.setItem(key, on ? '1' : '0'); e.target.textContent = `${on ? 'Hide' : 'Show'} 本金/收益 columns`; };
+  const draw = sr => {
+    const s = sr.summary, P = sr.points;
+    $('#ahInvSum').innerHTML = `<span>${esc(sr.from)} – ${esc(sr.to)}</span>
+      <span>Principal 本金 <b>${money(s.start_principal, cur)}</b> → <b>${money(s.end_principal, cur)}</b></span>
+      <span>Contributions 投入 <b class="pos">+${num(s.contributions)}</b>${s.withdrawals ? ` · withdrawals 取出 <b class="neg">−${num(s.withdrawals)}</b>` : ''}</span>
+      <span>Returns 收益 <b class="${s.period_returns < 0 ? 'neg' : 'pos'}">${sgn(s.period_returns, cur)}</b> (cumulative ${money(s.start_returns, cur)} → ${money(s.end_returns, cur)})</span>
+      <span>Return 收益率 <b>${pctS(s.return_pct)}</b> <span class="muted">Modified Dietz</span></span>`;
+    const pr = P.length > 60 ? 0 : 2;
+    chart('ahInvChart', {type: 'line', data: {labels: P.map(q => q.date), datasets: [
+      {label: 'Market value 市值', data: P.map(q => q.value), borderColor: '#3a7bd5', backgroundColor: 'rgba(58,123,213,.10)', fill: '+1', tension: .2, pointRadius: pr},
+      {label: 'Principal 本金', data: P.map(q => q.principal), borderColor: '#9aa3b2', backgroundColor: 'rgba(154,163,178,.15)', fill: 'origin', stepped: true, pointRadius: 0},
+      {label: 'Returns 收益', data: P.map(q => q.returns), borderColor: '#14a06f', borderDash: [5, 4], fill: false, tension: .2, pointRadius: pr}]},
+      options: {interaction: {mode: 'index', intersect: false}, scales: {x: {ticks: {maxTicksLimit: 8}}},
+        plugins: {tooltip: {callbacks: {label: c => `${c.dataset.label}: ${money(c.parsed.y, cur)}`, footer: items => { const q = P[items[0].dataIndex]; return Math.abs(q.unexplained) >= 0.01 ? `Unexplained 未解释: ${money(q.unexplained, cur)}` : ''; }}}}}});
+  };
+  draw(x.series);
+  $('#ahIv').value = 'auto';
+  $('#ahIv').onchange = async e => {
+    const q = new URLSearchParams({interval: e.target.value});
+    if (h.start) q.set('from', h.start); if (h.end) q.set('to', h.end);
+    draw(await guard(() => api(`/api/accounts/${id}/investment-series?` + q)));
+  };
+}

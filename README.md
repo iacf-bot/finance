@@ -248,6 +248,31 @@ Optional body fields:
 
 The response contains `status` (`posted` or `review`), `confidence` (0–1) and the transaction.
 
+Every response also has a short top-level **`message`** that Siri can read aloud. It is in Chinese when the input
+is Chinese:
+
+| Case | `message` |
+|---|---|
+| posted | `Saved: Coffee $4.50 · Cash` · `已记: 午饭 ¥35 · 支付宝` |
+| review | `Needs review: lunch $25 (account not found)` |
+| transfer | `Transferred $300 Checking → Amex` |
+| `balance …` / `reconcile …` | `Balance set: Alipay ¥1,234.50` · `Balance unchanged: …` · `Reconciled: …` (the long explanation is in `detail`) |
+| `dry_run` | `Preview: Coffee $4.50 · Cash` · `Preview: balance Amex → owed $250` |
+| error (HTTP 400) | JSON `{"detail": "...", "message": "Couldn't save: …", "ok": false}` |
+
+The body can be JSON (`{"text": ...}`, any `application/json; charset=…`; the `text` key is case-insensitive;
+`dry_run`/`review` accept `true` or `"true"`), a form or plain text. If text is sent with a JSON content type, it
+is treated as the text. `POST /api/accounts/{id}/set-balance` is separate and keeps its own `message`.
+
+**iPhone / Apple Watch Shortcut:**
+1. Use *Dictate Text* (or *Ask for Input*).
+2. Add *Get Contents of URL* with:
+   * URL `http://<tailscale-ip>:8088/api/quick-add`
+   * Method POST
+   * Header `X-API-Key: <key>`
+   * Request Body JSON with `text` = the dictated text
+3. Add *Get Dictionary Value* `message`, then *Show Result* / *Speak Text*.
+
 **Syntax.** Write a free-form line containing an amount, plus optionally an account, a category word, a date,
 a merchant and #tags. Order doesn't matter.
 
@@ -433,3 +458,50 @@ Compare an account with a bank/card statement and lock the balance at that date.
   * `GET /api/accounts/{id}/history?period=1M|3M|6M|1Y|YTD|ALL` (or `start`/`end`) also takes `q`, `category_id`, `before` and `limit`.
     It returns items with `running_balance`/`running_shown`/`account_effect`, plus `balances` {opening, closing, inflow, outflow}.
   * New indexes: `transactions(date,id)`, `(account_id,date,id)` and `(to_account_id,date,id)`.
+
+## Principal 本金投入 vs returns 投资收益 (investment accounts)
+
+Investment-type accounts (brokerage, retirement 401k/IRA, crypto) split their value into **principal** (net
+contributions) and **returns**.
+
+* **Principal** = opening balance (minus the part marked as prior returns) + transfers in − transfers out +
+  income deposited (payroll contributions; an employer match counts as a contribution and is labelled
+  *Employer match 雇主匹配*) + refunds − withdrawals/expenses + adjustments with reason *Opening balance* or
+  *Unrecorded income/spending*. A transfer between two investment accounts moves principal from one to the other.
+* **Returns** = prior returns in the opening balance + adjustments with reason *Investment gain/loss*, *Interest*
+  or *Fees* (negative) + dividends − investment fees + income in an interest/dividend category + trade gains on
+  holdings (realized + unrealized = market value − buys + sells).
+* **Current value 当前市值** = the account balance (cash + holdings at market value). If it is not equal to
+  principal + returns, the **unexplained difference 未解释差额** is shown. It comes from unclassified balance
+  adjustments (*Correction/other*, e.g. imported 余额变更) and reconciliation differences.
+  * Unclassified corrections count as returns **only after** you run **Investments → 🏷 Reclassify**.
+  * The account page shows a hint with a button that opens the tool for just that account.
+  * Nothing is changed automatically.
+* **Overrides:** the transaction form has *Investment: counts as 计入* (Auto / Principal / Returns / Other).
+  The account form has *Prior returns in opening balance* (default 0, so the whole opening balance is principal).
+
+**Account page:**
+* Cards: Current value, Principal and Returns (amount and % of principal).
+* Period figures for the selected filter: principal start → end, contributions/withdrawals, returns, and the
+  Modified Dietz return.
+* A chart of market value, cumulative principal and cumulative returns. It follows the period filter
+  (1M/3M/6M/YTD/1Y/3Y/All/custom), with automatic daily/weekly/monthly granularity or a manual choice.
+* Each row has a 本金/收益/其他/交易 badge, plus running Principal and Returns columns next to the running cash
+  balance. On mobile these columns are hidden by default, with a toggle button.
+
+**Accounts page:** investment accounts and groups show
+`Principal $X · Returns +$Y (+Z%)` (toggle: *principal & returns*).
+
+API:
+```bash
+curl -s -H "$H" "$B/api/accounts"                    # accounts[].invest {value, principal, returns, returns_pct,
+                                                     #   unexplained, correction_count, ...}; tree[].invest for groups
+curl -s -H "$H" "$B/api/accounts/7/history?period=1Y" # items[] add pr_class, pr_badge, running_principal,
+                                                     #   running_returns; first page adds invest {..., period, series}
+curl -s -H "$H" "$B/api/accounts/7/investment-series?from=2026-01-01&to=2026-06-30&interval=week"
+#   ?period=1M|3M|6M|YTD|1Y|3Y|ALL or from/to; interval=auto|day|week|month
+#   -> {interval, points:[{date, principal, returns, value, unexplained}], summary:{start_principal, end_principal,
+#       returns_change, contributions, withdrawals, period_returns, return_pct (Modified Dietz)}}
+curl -s -H "$H" -X PUT "$B/api/transactions/123" -H 'Content-Type: application/json' -d '{"pr_class":"returns"}'
+curl -s -H "$H" -X PUT "$B/api/accounts/7" -H 'Content-Type: application/json' -d '{"opening_returns":2500}'
+```

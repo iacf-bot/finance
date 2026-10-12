@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import config, demo, importers, ingest, ledger, quotes, reconcile, returns, schedules
+from . import config, demo, importers, ingest, ledger, principal, quotes, reconcile, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -77,7 +77,8 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             request.state.via = "api_key" if api_ok else "session"
             return await call_next(request)
         if path.startswith("/api/"):
-            return JSONResponse({"detail": "Not authenticated (login or X-API-Key header required)"}, status_code=401)
+            return JSONResponse({"detail": "Not authenticated (login or X-API-Key header required)",
+                                 "message": "Not signed in: add the X-API-Key header"}, status_code=401)
         return RedirectResponse("/setup" if not db.get_setting("password_hash") else "/login", status_code=303)
 
     app.add_middleware(SessionMiddleware, secret_key=db.get_setting("session_secret"), session_cookie="iacf_session",
@@ -279,7 +280,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
 
     # ------------------------------------------------------------ accounts
     ACCT_FIELDS = ["group_id", "name", "type", "currency", "opening_balance", "credit_limit", "institution", "last4",
-                   "aliases", "note", "archived", "sort"]
+                   "aliases", "note", "archived", "sort", "opening_returns"]
 
     def _acct_data(body: dict, partial=False) -> dict:
         d = {k: body[k] for k in ACCT_FIELDS if k in body}
@@ -297,7 +298,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         if not d.get("group_id") and d.get("type"):
             g = db.one("SELECT id FROM account_groups WHERE name=?", (ACCOUNT_TYPES[d["type"]][1],))
             d["group_id"] = g["id"] if g else None
-        for k in ("opening_balance", "credit_limit"):
+        for k in ("opening_balance", "credit_limit", "opening_returns"):
             if k in d:
                 d[k] = None if d[k] in ("", None) else float(d[k])
         if "opening_balance" in d and d["opening_balance"] is None:
@@ -307,6 +308,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     @app.get("/api/accounts")
     def list_accounts():
         accts = ledger.accounts_with_balances(db)
+        principal.annotate_accounts(db, accts)
         return {"accounts": accts, "net_worth": ledger.net_worth(db, [a for a in accts]),
                 "tree": ledger.account_tree(db, accts),
                 "groups": db.all("SELECT * FROM account_groups ORDER BY sort, id")}
@@ -463,6 +465,27 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             return ledger.account_history(db, aid, dict(request.query_params))
         except KeyError:
             raise HTTPException(404, "Account not found")
+
+    @app.get("/api/accounts/{aid}/investment-series")
+    def investment_series(aid: int, request: Request):
+        """Principal vs returns vs value over time for an investment account.
+        ?period=1M|3M|6M|YTD|1Y|3Y|ALL or from=YYYY-MM-DD&to=YYYY-MM-DD, interval=auto|day|week|month."""
+        q = request.query_params
+        a = next((x for x in ledger.accounts_with_balances(db) if x["id"] == aid), None)
+        if not a:
+            raise HTTPException(404, "Account not found")
+        if not a["is_investment"]:
+            raise HTTPException(400, "Not an investment account")
+        start, end = q.get("from") or q.get("start"), q.get("to") or q.get("end")
+        if not (start or end):
+            per = (q.get("period") or "1Y").upper()
+            if per not in ("1M", "3M", "6M", "1Y", "3Y", "YTD", "ALL"):
+                raise HTTPException(400, "period must be 1M, 3M, 6M, YTD, 1Y, 3Y or ALL")
+            start = ledger.period_start(per)
+        try:
+            return principal.investment_series(db, a, start, end, q.get("interval") or "auto")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.get("/api/transactions/export.csv")
     def export_tx(request: Request):
@@ -622,27 +645,49 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     # ------------------------------------------------------------ quick add + email ingest
     @app.post("/api/quick-add")
     async def quick_add(request: Request):
-        ctype = request.headers.get("content-type", "")
-        if "application/json" in ctype:
-            body = await request.json()
-        elif "form" in ctype:
+        """Body: JSON {"text": "...", "dry_run": false, "review": false} (Shortcuts "Get Contents of URL" with a JSON body),
+        a form, or plain text. Every response has a short 'message' (Siri-friendly); errors are JSON {detail, message}."""
+        raw = await request.body()
+        ctype = (request.headers.get("content-type") or "").lower()
+        body: Any = None
+        if "json" in ctype or raw[:1] in (b"{", b'"'):
+            try:
+                body = json.loads(raw.decode("utf-8-sig") or "null")
+            except (ValueError, UnicodeDecodeError):
+                body = None  # not JSON after all: treat as plain text below
+        if body is None and "form" in ctype:
             body = dict(await request.form())
-        else:
-            body = {"text": (await request.body()).decode("utf-8", errors="replace")}
-        text = str(body.get("text") or "").strip()
+        if isinstance(body, str):
+            body = {"text": body}
+        if not isinstance(body, dict):
+            body = {"text": raw.decode("utf-8-sig", errors="replace")}
+        lower = {str(k).lower(): v for k, v in body.items()}
+        text = str(lower.get("text") or "").strip().strip('"').strip()
+
+        def flag(name):
+            v = lower.get(name)
+            return v if isinstance(v, bool) else str(v or "").strip().lower() in ("1", "true", "yes", "on")
+
         if not text:
-            raise HTTPException(400, "text is required")
+            return JSONResponse({"detail": "text is required", "ok": False,
+                                 "message": "Nothing to add: send text like 'coffee 4.50 cash'"}, status_code=400)
         default_src = "web" if getattr(request.state, "via", "") == "session" else "api"
-        src = body.get("source") or default_src
+        src = lower.get("source") or default_src
         if src not in ("web", "api", "email", "bot", "message"):
             src = "api"
+        opts = {"ledger_id": lower.get("ledger_id"), "dry_run": flag("dry_run"), "review": flag("review")}
         try:
-            return _qa(text, src, body)
+            return _qa(text, src, opts)
         except (ingest.QuickAddError, ledger.ValidationError) as e:
-            raise HTTPException(400, str(e))
+            return JSONResponse({"detail": str(e), "ok": False, "message": ingest.error_message(str(e), text)}, status_code=400)
 
     def _qa(text, src, body):
-        return ingest.quick_add(db, text, source=src, ledger_id=body.get("ledger_id"),
+        lid = body.get("ledger_id")
+        try:
+            lid = int(lid) if lid not in (None, "") else None
+        except (TypeError, ValueError):
+            lid = None
+        return ingest.quick_add(db, text, source=src, ledger_id=lid,
                                 dry_run=bool(body.get("dry_run")), force_review=bool(body.get("review")))
 
     @app.post("/api/ingest/email")
@@ -876,10 +921,10 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             raise HTTPException(400, str(e))
 
     @app.get("/api/adjustments/reclassify")
-    def reclassify_preview(include_savings: bool = False, account_ids: str = ""):
+    def reclassify_preview(include_savings: bool = False, account_ids: str = "", only: bool = False):
         """Preview only: lists unclassified balance adjustments with a proposed reason. Writes nothing."""
         ids = [int(x) for x in account_ids.split(",") if x.strip().isdigit()]
-        return returns.reclassify_preview(db, include_savings, ids)
+        return returns.reclassify_preview(db, include_savings, ids, only=only)
 
     @app.post("/api/adjustments/reclassify")
     def reclassify_apply(body: dict = Body(...)):

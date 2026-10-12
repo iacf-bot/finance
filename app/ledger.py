@@ -242,6 +242,10 @@ def account_tree(db: Database, accts: list[dict] | None = None, include_empty: b
             by_currency=[{"currency": c, "total": round(v, 2) + 0.0, "total_base": round(convert(v, c, base, rates), 2) + 0.0}
                          for c, v in sorted(by_cur.items(), key=lambda kv: (kv[0] != base, kv[0]))],
             mixed_currency=len(by_cur) > 1, children=[])
+        from .principal import group_totals
+        inv = group_totals(members, base, rates)
+        if inv:
+            n["invest"] = inv
         out.append(n)
     return out
 
@@ -356,7 +360,7 @@ def parse_ctx(db: Database) -> dict:
 TX_FIELDS = ["ledger_id", "kind", "date", "amount", "currency", "account_id", "to_account_id", "to_amount",
              "orig_amount", "orig_currency", "category_id", "merchant_id", "member_id", "project_id", "tags", "note",
              "source", "attachment", "status", "confidence", "raw_text", "external_id", "ticker", "shares", "price",
-             "fee", "is_demo"]
+             "fee", "is_demo", "pr_class"]
 
 
 def _norm_date(d: Any) -> str:
@@ -411,6 +415,14 @@ def normalize_tx(con, data: dict, rates: dict[str, float], existing: dict | None
                 tx[k] = float(tx[k])
             except (TypeError, ValueError):
                 raise ValidationError(f"{k} must be a number")
+    if "pr_class" in tx:  # principal/returns override for investment accounts ('' / 'auto' = automatic)
+        pc = str(tx.get("pr_class") or "").strip().lower()
+        if pc in ("", "auto", "none", "null"):
+            tx["pr_class"] = None
+        elif pc in ("principal", "returns", "other"):
+            tx["pr_class"] = pc
+        else:
+            raise ValidationError("pr_class must be principal, returns, other or auto")
     acct = con.execute("SELECT * FROM accounts WHERE id=?", (tx["account_id"],)).fetchone() if tx.get("account_id") else None
     if tx.get("account_id") and not acct:
         raise ValidationError("Account not found")
@@ -683,7 +695,7 @@ def balance_before(seq: list[tuple[str, int, float]], cps: list[dict], when: str
     return round(bal, 2) + 0.0
 
 
-HISTORY_PERIODS = {"1M": 1, "3M": 3, "6M": 6, "1Y": 12}
+HISTORY_PERIODS = {"1M": 1, "3M": 3, "6M": 6, "1Y": 12, "3Y": 36}
 
 
 def period_start(period: str, today: date | None = None) -> str | None:
@@ -723,6 +735,10 @@ def account_history(db: Database, aid: int, f: dict, today: date | None = None) 
         t["running_shown"] = None if b is None else round(b * sign, 2) + 0.0
         t["account_effect"] = round(tx_effect_for(t, aid), 2) + 0.0
     out = {"account": a, "period": period, "start": start, "end": end, "cash_only": bool(a.get("is_investment")), **page}
+    from .principal import history_extras
+    inv = history_extras(db, a, page["items"], start, end, not f.get("before"), today)
+    if inv:
+        out["invest"] = inv
     if not f.get("before"):
         cps = db.all("SELECT as_of, cash_balance FROM reconciliations WHERE account_id=? ORDER BY as_of, id", (aid,))
         opening = float(db.one("SELECT opening_balance FROM accounts WHERE id=?", (aid,))["opening_balance"] or 0)

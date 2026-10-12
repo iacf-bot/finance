@@ -165,6 +165,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
     </div>
     <label class="f${U('category_id')}" data-show="expense income refund dividend"><span>Category 分类</span><select name="category_id"></select></label>
     <label class="f" data-show="adjustment"><span>Reason for difference 差额原因</span><select name="adj_reason">${reasonOptions(t.adj_reason || (isNew ? defaultReason(acctById(t.account_id)) : 'correction'), {opening: true})}</select><span class="small muted" id="reasonWhy"></span></label>
+    <label class="f" id="prWrap" style="display:none"><span>Investment: counts as 计入</span><select name="pr_class">${[['', 'Auto 自动'], ['principal', 'Principal 本金投入'], ['returns', 'Returns 投资收益'], ['other', 'Other 其他 (excluded)']].map(([v, l]) => `<option value="${v}" ${(t.pr_class || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">Only for investment accounts, e.g. mark a deposit as returns.</span></label>
     <label class="f" data-show="buy sell dividend invest_fee"><span>Ticker 代码</span><input name="ticker" value="${esc(t.ticker || '')}" placeholder="AAPL, VTI, 600519.SS, BTC-USD"></label>
     <label class="f" data-show="buy sell"><span>Shares 数量</span><input name="shares" type="number" step="any" inputmode="decimal" value="${t.shares ?? ''}"></label>
     <label class="f" data-show="buy sell"><span>Price 价格</span><input name="price" type="number" step="any" inputmode="decimal" value="${t.price ?? ''}"></label>
@@ -210,6 +211,8 @@ async function openTx(id, after, preset = {}, opts = {}) {
     if (kind === 'adjustment') form.amount.title = 'Balance adjustment (not income/expense): positive increases the balance, negative decreases it. To set an account to an exact balance use Accounts → Set balance.';
     syncTransfer(); curHint();
     const rw = $('#reasonWhy', bg); if (rw) rw.textContent = REASON_HELP[form.adj_reason.value] || '';
+    const invA = id => { const a = acctById(id); return !!(a && isInvType(a.type)); };
+    $('#prWrap', bg).style.display = !['buy', 'sell'].includes(kind) && (kind === 'transfer' ? invA(form.from_account_id.value) || invA(form.to_account_id.value) : invA(form.account_id.value)) ? '' : 'none';
     recWarn();
   };
   const recWarn = () => {
@@ -218,7 +221,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
     const old = id ? reconWarning(t.date, t.account_id, t.kind === 'transfer' ? t.to_account_id : null) : '';
     const el = $('#recWarn', bg); const msg = w || old; el.innerHTML = msg; el.style.display = msg ? '' : 'none';
   };
-  ['date', 'account_id', 'from_account_id', 'to_account_id'].forEach(n => form[n].addEventListener('change', () => recWarn()));
+  ['date', 'account_id', 'from_account_id', 'to_account_id'].forEach(n => form[n].addEventListener('change', () => sync()));
   form.adj_reason.addEventListener('change', () => { dirty.add('adj_reason'); sync(); });
   form.account_id.addEventListener('change', () => { if (isNew && !dirty.has('adj_reason')) { form.adj_reason.value = defaultReason(acctById(form.account_id.value)); sync(); } });
   // new forms: switching type applies that type's remembered defaults to fields the user hasn't touched
@@ -255,6 +258,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
     if (!['expense', 'income', 'refund', 'dividend'].includes(kind)) o.category_id = null;
     o.adj_reason = kind === 'adjustment' ? fd.get('adj_reason') : null;
     if (!o.adj_reason) delete o.adj_reason;
+    if ($('#prWrap', bg).style.display === 'none') delete o.pr_class; else o.pr_class = fd.get('pr_class') || 'auto';
     if (isNew && opts.raw_text) o.raw_text = opts.raw_text;
     return o;
   };
@@ -306,7 +310,7 @@ async function openQuickForm(text) {
   let r;
   try { r = await api('/api/quick-add', {method: 'POST', body: {text, dry_run: true}}); }
   catch (e) { toast(e.message, true); return; }
-  if (r.action === 'set_balance') { toast('Balance commands are applied with Add (or Accounts → Set balance)', true); return; }
+  if (r.action === 'set_balance' || r.action === 'reconcile') { toast('Balance commands are applied with Add (or Accounts → Set balance)', true); return; }
   const p = r.prefill || {};
   const preset = {};
   for (const k of ['kind', 'amount', 'currency', 'account_id', 'to_account_id', 'category_id', 'merchant', 'member_id', 'project_id', 'tags', 'date', 'note']) if (p[k] !== null && p[k] !== undefined && p[k] !== '') preset[k] = p[k];

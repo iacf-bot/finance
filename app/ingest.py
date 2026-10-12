@@ -18,7 +18,8 @@ from cryptography.fernet import Fernet, InvalidToken
 from . import ledger
 from .db import Database, now_iso
 from .email_rules import parse_email
-from .parser import parse_quick_add, find_accounts
+from .parser import find_accounts, parse_quick_add
+from .parser import normalize as parser_normalize
 
 log = logging.getLogger("finance.ingest")
 
@@ -92,10 +93,12 @@ def quick_reconcile(db: Database, text: str, ledger_id: int | None = None, dry_r
                             f"statement (difference {p['difference_shown']:+,.2f}). Open Accounts → Reconcile to record the "
                             f"difference, or use 'balance …' first.")
     if dry_run:
-        out.update(status="preview", message=f"Would mark {p['account_name']} reconciled at {p['statement']:,.2f} {p['currency']} (matches)")
+        out.update(status="preview", detail=f"Would mark {p['account_name']} reconciled at {p['statement']:,.2f} {p['currency']} (matches)")
+        out["message"] = short_message(db, out, text, dry_run=True)
         return out
     r = reconcile.create(db, res.account_id, amount, when)
-    out.update(status="posted", message=r["message"], reconciliation=r["reconciliation"])
+    out.update(status="posted", detail=r["message"], reconciliation=r["reconciliation"])
+    out["message"] = short_message(db, out, text)
     return out
 
 
@@ -126,14 +129,150 @@ def quick_set_balance(db: Database, text: str, ledger_id: int | None = None, dry
            "confidence": 1.0, "action": "set_balance", "reason": reason, "reason_label": ledger.reason_label(reason)}
     if dry_run:
         before = ledger.account_balance_at(db, res.account_id, when)
-        out.update(status="preview", message=f"Would set the balance of {acct['name']} to {amount:,.2f} {acct['currency']}"
-                                             f" · reason: {ledger.reason_label(reason)}")
+        out.update(status="preview", detail=f"Would set the balance of {acct['name']} to {amount:,.2f} {acct['currency']}"
+                                            f" · reason: {ledger.reason_label(reason)}")
         out["previous_signed"] = before
+        out["message"] = short_message(db, out, text, dry_run=True)
         return out
     r = ledger.set_balance(db, res.account_id, amount, when, None, ledger_id=ledger_id, reason=reason)
     out.update(status="posted" if r["created"] else "unchanged", balance_set={k: v for k, v in r.items() if k != "transaction"},
-               transaction=r["transaction"], message=r["message"])
+               transaction=r["transaction"], detail=r["message"])
+    out["message"] = short_message(db, out, text)
     return out
+
+
+# ---------------------------------------------------------------- short, Siri-friendly result messages
+CJK_RX = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+CUR_SYMBOL = {"USD": "$", "CNY": "¥", "RMB": "¥", "EUR": "€", "GBP": "£", "JPY": "JP¥", "HKD": "HK$", "TWD": "NT$",
+              "CAD": "CA$", "AUD": "A$", "SGD": "S$", "KRW": "₩", "INR": "₹"}
+
+
+def is_chinese(text: str | None) -> bool:
+    return bool(CJK_RX.search(text or ""))
+
+
+def fmt_money(v, cur: str | None) -> str:
+    if v is None:
+        return ""
+    cur = (cur or "").upper()
+    neg = v < 0
+    body = f"{abs(float(v)):,.2f}"
+    if body.endswith(".00"):  # whole amounts read better aloud: "$300", "¥35"
+        body = body[:-3]
+    sym = CUR_SYMBOL.get(cur)
+    s = f"{sym}{body}" if sym else f"{body} {cur}".strip()
+    return ("-" if neg else "") + s
+
+
+def _acct_name(db: Database, aid) -> str | None:
+    if not aid:
+        return None
+    a = db.one("SELECT name FROM accounts WHERE id=?", (aid,))
+    return a["name"] if a else None
+
+
+def _what(db: Database, text: str, p: dict, zh: bool) -> str:
+    """A short description for the message: merchant, else the words of the input minus amount/account words,
+    else the category name."""
+    if p.get("merchant"):
+        return str(p["merchant"])[:30]
+    t = parser_normalize(text or "")
+    t = re.sub(r"(?i)(?:[$¥￥€£]\s*)?[-+]?\d[\d,]*(?:\.\d+)?\s*(?:usd|cny|rmb|eur|gbp|jpy|hkd|元|块|刀|美元|美金|人民币|dollars?|bucks?)?", " ", t)
+    for aid in (p.get("account_id"), p.get("to_account_id")):
+        if not aid:
+            continue
+        a = db.one("SELECT name, aliases FROM accounts WHERE id=?", (aid,)) or {}
+        names = [a.get("name") or ""] + [x.strip() for x in (a.get("aliases") or "").split(",")]
+        for n in sorted({n for n in names if n and len(n) >= 2}, key=len, reverse=True):
+            t = re.sub(re.escape(n), " ", t, flags=re.I)
+    t = re.sub(r"(?i)(?<![a-z])(?:paid|pay|with|via|using|on|at|from|to|for|by|today|yesterday|用|从|到|付|花了|花)(?![a-z])", " ", t)
+    t = re.sub(r"\s+", " ", t).strip(" ,.;:-·")
+    if t:
+        return t[:30]
+    if p.get("category_id"):
+        c = db.one("SELECT name, name_zh FROM categories WHERE id=?", (p["category_id"],)) or {}
+        return (c.get("name_zh") if zh and c.get("name_zh") else c.get("name")) or ""
+    return ""
+
+
+def _review_reason(out: dict, p: dict, zh: bool, force_review: bool) -> str:
+    if p.get("amount") in (None, 0):
+        return "没找到金额" if zh else "amount not found"
+    if not p.get("account_id"):
+        return "没找到账户" if zh else "account not found"
+    if p.get("kind") == "transfer" and not p.get("to_account_id"):
+        return "没找到转入账户" if zh else "destination account not found"
+    if out.get("warning"):
+        return str(out["warning"])[:80]
+    if force_review:
+        return "已放入待确认" if zh else "sent to review"
+    pct = round((out.get("confidence") or 0) * 100)
+    return f"把握度 {pct}%" if zh else f"low confidence {pct}%"
+
+
+def short_message(db: Database, out: dict, text: str, dry_run: bool = False, force_review: bool = False) -> str:
+    """One line for Siri / Shortcuts / Apple Watch, in Chinese when the input text is Chinese."""
+    zh = is_chinese(text)
+    sep = ": "
+    action = out.get("action")
+    p = out.get("parsed") or {}
+    if action in ("set_balance", "reconcile"):
+        aid = p.get("account_id")
+        a = db.one("SELECT name, currency, type FROM accounts WHERE id=?", (aid,)) or {}
+        liab = ledger.is_liability(a.get("type") or "")
+        amt = fmt_money(p.get("amount"), a.get("currency"))
+        owed = ("欠款 " if zh else "owed ") if liab else ""
+        name = a.get("name") or "?"
+        if action == "reconcile":
+            if dry_run:
+                return f"预览{sep}对账 {name} {owed}{amt} (一致)" if zh else f"Preview{sep}reconcile {name} {owed}{amt} (matches)"
+            return f"已对账{sep}{name} {owed}{amt}" if zh else f"Reconciled{sep}{name} {owed}{amt}"
+        if dry_run:
+            return f"预览{sep}余额 {name} → {owed}{amt}" if zh else f"Preview{sep}balance {name} → {owed}{amt}"
+        if out.get("status") == "unchanged":
+            return f"余额无变化{sep}{name} {owed}{amt}" if zh else f"Balance unchanged{sep}{name} {owed}{amt}"
+        return f"余额已设为{sep}{name} {owed}{amt}" if zh else f"Balance set{sep}{name} {owed}{amt}"
+
+    t = out.get("transaction") or {}
+    if t:  # what was actually saved
+        p = {**p, "kind": t.get("kind"), "account_id": t.get("account_id"), "to_account_id": t.get("to_account_id"),
+             "category_id": t.get("category_id") or p.get("category_id")}
+        amount = t.get("orig_amount") if t.get("orig_currency") else t.get("amount")
+        cur = t.get("orig_currency") or t.get("currency")
+    else:
+        amount = p.get("amount")
+        cur = p.get("currency") or (db.one("SELECT currency FROM accounts WHERE id=?", (p.get("account_id"),)) or {}).get("currency") \
+            if p.get("account_id") else (p.get("currency") or db.get_setting("base_currency", "USD"))
+    amt = fmt_money(amount, cur) if amount else ""
+    kind = p.get("kind") or "expense"
+    if amt and kind in ("income", "refund", "dividend", "sell"):
+        amt = "+" + amt
+    acct, to = _acct_name(db, p.get("account_id")), _acct_name(db, p.get("to_account_id"))
+    status = out.get("status")
+    if status == "review":
+        what = _what(db, text, p, zh) or (text or "").strip()[:30]
+        body = " ".join(x for x in (what, amt) if x)
+        reason = _review_reason(out, p, zh, force_review)
+        head = ("预览（需确认）" if zh else "Preview (needs review)") if dry_run else ("待确认" if zh else "Needs review")
+        return f"{head}{sep}{body} ({reason})"
+    if kind == "transfer":
+        core = f"{amt} {acct or '?'} → {to or '?'}"
+        if dry_run:
+            return f"预览{sep}转账 {core}" if zh else f"Preview{sep}transfer {core}"
+        return f"已转账{sep}{core}" if zh else f"Transferred {core}"
+    what = _what(db, text, p, zh)
+    if what and not zh:
+        what = what[:1].upper() + what[1:]
+    core = " ".join(x for x in (what, amt) if x) + (f" · {acct}" if acct else "")
+    if dry_run:
+        return f"预览{sep}{core}" if zh else f"Preview{sep}{core}"
+    return f"已记{sep}{core}" if zh else f"Saved{sep}{core}"
+
+
+def error_message(detail: str, text: str | None) -> str:
+    zh = is_chinese(text)
+    detail = re.split(r"(?<=[.!?。！？])\s", (detail or "").strip(), maxsplit=1)[0] or "unknown error"
+    return f"没记上: {detail}" if zh else f"Couldn't save: {detail}"
 
 
 def prefill_from_parse(db: Database, res, text: str) -> dict:
@@ -172,6 +311,7 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
     out = {"parsed": res.to_dict(), "confidence": res.confidence, "status": status, "threshold": th}
     if dry_run:
         out.update(prefill_from_parse(db, res, text))
+        out["message"] = short_message(db, out, text, dry_run=True, force_review=force_review)
         return out
     data = {"kind": res.kind, "date": res.date, "amount": res.amount or 0, "currency": res.currency,
             "account_id": res.account_id, "to_account_id": res.to_account_id, "category_id": res.category_id,
@@ -186,6 +326,7 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
         out["status"] = "review"
         out["warning"] = str(e)
         out["transaction"] = ledger.create_tx(db, data)
+    out["message"] = short_message(db, out, text, force_review=force_review)
     return out
 
 

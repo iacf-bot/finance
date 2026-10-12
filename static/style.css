@@ -198,3 +198,15 @@ table.upcoming td{padding:5px 6px}
 .home-add .qa{order:0;max-width:none}.home-add #hqDetail{order:1}
 .ah-det{display:flex;gap:8px;align-items:flex-start}.ah-det>.hico-s{flex:0 0 auto;line-height:1.4}
 @media (max-width:760px){body.on-home .topbar .qa{display:none}}
+
+/* principal 本金 vs returns 收益 (investment accounts) */
+.pr-line{color:#555;margin-top:2px}.gt-sub.pr-line{text-align:right}
+.pr-badge{display:inline-block;font-size:10.5px;line-height:1;padding:3px 5px;border-radius:6px;vertical-align:1px;white-space:nowrap}
+.pr-principal{background:#e8edf5;color:#3d4f6b}.pr-returns{background:#e3f5ec;color:#14804f}.pr-other{background:#fdf0dc;color:#9a6200}.pr-trade{background:#eee;color:#666}
+.inv-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.inv-cards .ic{background:#f7f8fa;border-radius:10px;padding:10px 12px}.inv-cards .lbl{font-size:12px;color:#777}.inv-cards .val{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.inv-unexp{margin-top:8px;color:#9a6200}.inv-hint{margin-top:8px;background:#fff7e6;border:1px solid #f3d9a4;border-radius:8px;padding:8px 10px;font-size:13px}
+.inv-period{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0 6px}.inv-ctl{margin:6px 0}
+.ah-table td.prc{color:#555;font-variant-numeric:tabular-nums}.pr-tog{display:none}
+@media (max-width:700px){.inv-cards{grid-template-columns:1fr 1fr}.inv-cards .ic:first-child{grid-column:1/-1}.inv-cards .val{font-size:17px}
+ .ah-table .prc{display:none}#ahList.show-pr .ah-table .prc{display:table-cell}.pr-tog{display:inline-block}}

@@ -313,6 +313,13 @@ class Database:
             if "schedule_id" not in tcols:
                 con.execute("ALTER TABLE transactions ADD COLUMN schedule_id INTEGER")
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_sched ON transactions(schedule_id)")
+            # additive migration: principal/returns override per transaction (NULL = automatic) and the part of an
+            # account's opening balance that is prior returns (NULL/0 = all principal)
+            if "pr_class" not in tcols:
+                con.execute("ALTER TABLE transactions ADD COLUMN pr_class TEXT")
+            acols = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
+            if "opening_returns" not in acols:
+                con.execute("ALTER TABLE accounts ADD COLUMN opening_returns REAL")
             # cursor pagination / account history (additive indexes)
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_date_id ON transactions(date, id)")
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_acct_date ON transactions(account_id, date, id)")
