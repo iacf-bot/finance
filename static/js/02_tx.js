@@ -40,7 +40,7 @@ async function loadDemo() { await guard(() => api('/api/demo/load', {method: 'PO
 
 /* ---------- transaction table ---------- */
 function txAmount(t) {
-  const sign = ['expense', 'buy', 'invest_fee'].includes(t.kind) ? '-' : ['income', 'refund', 'sell', 'dividend'].includes(t.kind) ? '+' : t.kind === 'adjustment' && t.amount > 0 ? '+' : '';
+  const sign = ['expense', 'buy', 'invest_fee'].includes(t.kind) ? '-' : ['income', 'refund', 'sell', 'dividend', 'reimbursement'].includes(t.kind) ? '+' : t.kind === 'adjustment' && t.amount > 0 ? '+' : '';
   const cls = sign === '-' ? 'neg' : sign === '+' ? 'pos' : '';
   const amt = t.kind === 'adjustment' ? t.amount : Math.abs(t.amount);
   return `<span class="${cls}">${sign}${money(Math.abs(amt), t.currency)}</span>${t.orig_currency ? `<div class="small muted">${num(t.orig_amount)} ${t.orig_currency}</div>` : ''}`;
@@ -48,12 +48,14 @@ function txAmount(t) {
 function txDesc(t) {
   let main = t.kind === 'transfer' ? `${esc(t.account_name || '?')} → ${esc(t.to_account_name || '?')}` :
     ['buy', 'sell', 'dividend'].includes(t.kind) ? `${esc(t.ticker || '')} ${t.shares ? num(t.shares, 6) + ' @ ' + num(t.price, 4) : ''}` :
+    t.kind === 'reimbursement' ? `Reimbursement 报销${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}` :
     t.kind === 'adjustment' ? (t.adj_reason === 'opening' ? 'Opening balance 期初余额' : `${t.source === 'balance_set' ? '⚖️ Balance set 调整余额' : 'Balance adj. 余额调整'} · <span class="reason r-${esc(t.adj_reason || 'correction')}">${esc(t.adj_reason_label || 'Correction/other 校正/其他')}</span>`) :
     esc(t.category_label || 'Uncategorized 未分类');
   const bits = [t.merchant_name, t.member_name, t.project_name].filter(Boolean).map(esc);
   const tags = (t.tags || '').split(',').filter(Boolean).map(x => `<span class="pill">#${esc(x)}</span>`).join(' ');
   const demo = isDemoName(t.account_name) || /^\[DEMO\]/.test(t.note || '') ? '<span class="pill demo">DEMO</span> ' : '';
-  return `<div>${demo}<b>${main}</b> ${tags}</div><div class="small muted">${t.kind !== 'transfer' ? esc(t.account_name || '— no account —') + ' · ' : ''}${bits.join(' · ')}${t.note ? ' · ' + esc(t.note.slice(0, 80)) : ''}${t.attachment ? ' · 📎' : ''}</div>`;
+  const rb = t.kind === 'expense' && t.reimbursable ? `<span class="pill reimb" title="Reimbursable 可报销 — not counted as an expense">${t.reimb_writeoff ? '已核销' : '可报销'}${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}</span> ` : t.kind === 'reimbursement' ? '<span class="pill reimb">报销到账</span> ' : '';
+  return `<div>${demo}${rb}<b>${main}</b> ${tags}</div><div class="small muted">${t.kind !== 'transfer' ? esc(t.account_name || '— no account —') + ' · ' : ''}${bits.join(' · ')}${t.note ? ' · ' + esc(t.note.slice(0, 80)) : ''}${t.attachment ? ' · 📎' : ''}</div>`;
 }
 function txTable(rows, {compact = false, select = false, tbodyId = ''} = {}) {
   if (!rows.length && !tbodyId) return '<div class="empty">No transactions</div>';
@@ -150,7 +152,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
   if (isReview) { if (!t.amount) unsure.add('amount'); if (!t.account_id) unsure.add('account_id'); if (['expense', 'income', 'refund'].includes(t.kind) && !t.category_id) unsure.add('category_id'); if (t.kind === 'transfer' && !t.to_account_id) unsure.add('to_account_id'); }
   if (unsure.has('account_id')) unsure.add('from_account_id');
   const U = name => unsure.has(name) ? ' unsure' : '';
-  const html = `<div class="kind-tabs${U('kind')}">${['expense', 'income', 'transfer', 'refund', 'adjustment', 'buy', 'sell', 'dividend', 'invest_fee'].map(k => `<button type="button" data-k="${k}" class="${t.kind === k ? 'on' : ''}">${kindLabel[k]}</button>`).join('')}</div>
+  const html = `<div class="kind-tabs${U('kind')}">${['expense', 'income', 'transfer', 'refund', 'reimbursement', 'adjustment', 'buy', 'sell', 'dividend', 'invest_fee'].map(k => `<button type="button" data-k="${k}" class="${t.kind === k ? 'on' : ''}">${kindLabel[k]}</button>`).join('')}</div>
   ${isReview ? `<div class="demo-banner" style="background:#fff8e6;border-color:#e4a11b;color:#7a5200">📥 Review item from <b>${esc(t.source)}</b> ${confPill(t.confidence)} — check the fields${unsure.size ? ' (highlighted ones especially)' : ''} and press <b>Approve</b>.${t.raw_text ? `<div class="small mono" style="white-space:pre-wrap;max-height:120px;overflow:auto;margin-top:4px">${esc(t.raw_text.slice(0, 1500))}</div>` : ''}</div>` : ''}
   ${opts.banner ? `<div class="demo-banner prefill-banner"><div>✎ ${opts.banner}${unsure.size ? ' <b>Highlighted fields</b> are guesses — please check them.' : ''}</div></div>` : ''}
   <form id="txForm" class="form" autocomplete="off">
@@ -165,6 +167,12 @@ async function openTx(id, after, preset = {}, opts = {}) {
     </div>
     <label class="f${U('category_id')}" data-show="expense income refund dividend"><span>Category 分类</span><select name="category_id"></select></label>
     <label class="f" data-show="adjustment"><span>Reason for difference 差额原因</span><select name="adj_reason">${reasonOptions(t.adj_reason || (isNew ? defaultReason(acctById(t.account_id)) : 'correction'), {opening: true})}</select><span class="small muted" id="reasonWhy"></span></label>
+    <div class="full reimb-box" data-show="expense"><label class="chk"><input type="checkbox" name="reimbursable" ${t.reimbursable ? 'checked' : ''}> <b>可报销 Reimbursable</b> <span class="small muted">— not counted as an expense in reports; settle it in 报销中心</span></label>
+      <div class="reimb-fields form" ${t.reimbursable ? '' : 'hidden'}>
+        <label class="f"><span>Reimburse from 报销方 (company / person)</span><input name="reimb_payer" list="dlPayer" value="${esc(t.reimb_payer || '')}"></label>
+        <label class="f"><span>Expected amount 预计报销 <small class="muted">(default = amount)</small></span><input name="reimb_expected" type="number" step="0.01" inputmode="decimal" value="${t.reimb_expected ?? ''}"></label>
+        <label class="f full"><span>Reimbursement note 报销备注</span><input name="reimb_note" value="${esc(t.reimb_note || '')}"></label></div></div>
+    <div class="full small muted" data-show="reimbursement">💡 To settle reimbursable expenses (and link them), use <a href="#/reimb">报销中心 Reimbursements</a> → select → <b>Record reimbursement</b>. A receipt entered here is not income and isn't linked.</div>
     <label class="f" id="prWrap" style="display:none"><span>Investment: counts as 计入</span><select name="pr_class">${[['', 'Auto 自动'], ['principal', 'Principal 本金投入'], ['returns', 'Returns 投资收益'], ['unexplained', 'Unexplained 未分类']].map(([v, l]) => `<option value="${v}" ${((t.pr_class === 'other' ? 'unexplained' : t.pr_class) || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">Only for investment accounts, e.g. mark a deposit as returns.</span></label>
     <label class="f" data-show="buy sell dividend invest_fee"><span>Ticker 代码</span><input name="ticker" value="${esc(t.ticker || '')}" placeholder="AAPL, VTI, 600519.SS, BTC-USD"></label>
     <label class="f" data-show="buy sell"><span>Shares 数量</span><input name="shares" type="number" step="any" inputmode="decimal" value="${t.shares ?? ''}"></label>
@@ -245,6 +253,9 @@ async function openTx(id, after, preset = {}, opts = {}) {
   form.from_account_id.addEventListener('change', acctCur(form.from_account_id));
   form.to_account_id.addEventListener('change', syncTransfer);
   form.currency.addEventListener('change', curHint);
+  form.reimbursable.addEventListener('change', () => { $('.reimb-fields', bg).hidden = !form.reimbursable.checked; });
+  if (!document.getElementById('dlPayer')) document.body.insertAdjacentHTML('beforeend', '<datalist id="dlPayer"></datalist>');
+  api('/api/reimbursements?status=all').then(d => { $('#dlPayer').innerHTML = d.payers.map(p => `<option value="${esc(p)}">`).join(''); }).catch(() => {});
   sync();
   const collect = () => {
     const fd = new FormData(form); const o = {kind};
@@ -258,6 +269,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
     if (!['expense', 'income', 'refund', 'dividend'].includes(kind)) o.category_id = null;
     o.adj_reason = kind === 'adjustment' ? fd.get('adj_reason') : null;
     if (!o.adj_reason) delete o.adj_reason;
+    if (kind === 'expense') { o.reimbursable = form.reimbursable.checked; o.reimb_payer = fd.get('reimb_payer') || null; o.reimb_expected = fd.get('reimb_expected') || null; o.reimb_note = fd.get('reimb_note') || null; }
     if ($('#prWrap', bg).style.display === 'none') delete o.pr_class; else o.pr_class = fd.get('pr_class') || 'auto';
     if (isNew && opts.raw_text) o.raw_text = opts.raw_text;
     return o;
@@ -313,6 +325,6 @@ async function openQuickForm(text) {
   if (r.action === 'set_balance' || r.action === 'reconcile') { toast('Balance commands are applied with Add (or Accounts → Set balance)', true); return; }
   const p = r.prefill || {};
   const preset = {};
-  for (const k of ['kind', 'amount', 'currency', 'account_id', 'to_account_id', 'category_id', 'merchant', 'member_id', 'project_id', 'tags', 'date', 'note']) if (p[k] !== null && p[k] !== undefined && p[k] !== '') preset[k] = p[k];
+  for (const k of ['kind', 'amount', 'currency', 'account_id', 'to_account_id', 'category_id', 'merchant', 'member_id', 'project_id', 'tags', 'date', 'note', 'reimbursable', 'reimb_payer']) if (p[k] !== null && p[k] !== undefined && p[k] !== '') preset[k] = p[k];
   return openTx(null, null, preset, {uncertain: r.uncertain || [], raw_text: text, banner: `Pre-filled from “${esc(text)}” (confidence ${Math.round((r.confidence || 0) * 100)}%). Nothing is saved until you press Save.`});
 }

@@ -69,7 +69,7 @@ def classify(r: dict, aid: int, inv_ids: set | None = None) -> tuple[str, str]:
         if RETURN_INCOME_RX.search(text):
             return "returns", "income_return"
         return "principal", "employer_match" if MATCH_RX.search(text) else "contribution"
-    if k == "refund":
+    if k in ("refund", "reimbursement"):
         return "principal", "refund"
     if k == "expense":
         return "principal", "withdrawal"

@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import config, demo, importers, ingest, ledger, principal, quotes, reconcile, returns, schedules
+from . import config, demo, importers, ingest, ledger, principal, quotes, reimburse, reconcile, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -485,6 +485,44 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         try:
             return principal.investment_series(db, a, start, end, q.get("interval") or "auto")
         except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    # ------------------------------------------------------------ reimbursements 报销
+    @app.get("/api/reimbursements")
+    def reimb_list(request: Request):
+        """Reimbursable expenses: ?status=pending,partial (default) | settled | written_off | all, start, end, payer, account_id."""
+        try:
+            return reimburse.list_items(db, dict(request.query_params))
+        except (ValueError, ledger.ValidationError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/reimbursements/receipts")
+    def reimb_receipts(limit: int = 100):
+        return reimburse.receipts(db, limit)
+
+    @app.post("/api/reimbursements/receipts")
+    def reimb_record(body: dict = Body(...)):
+        """{account_id, date?, amount?, currency?, payer?, note?, items: [{expense_id, amount?}]} -> a 'reimbursement'
+        transaction (money in) linked to the expenses it settles (partial allowed)."""
+        try:
+            return reimburse.record_receipt(db, body)
+        except (ValueError, ledger.ValidationError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/reimbursements/mark")
+    def reimb_mark(body: dict = Body(...)):
+        """{ids: [...], reimbursable: true|false, payer?}"""
+        try:
+            return reimburse.mark(db, body.get("ids") or [], bool(body.get("reimbursable", True)), body.get("payer"))
+        except (ValueError, ledger.ValidationError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/reimbursements/{tid}/write-off")
+    def reimb_writeoff(tid: int, body: dict = Body(default={})):
+        """Won't be reimbursed: the unreimbursed part counts as a normal expense again. {"undo": true} reverses it."""
+        try:
+            return reimburse.write_off(db, tid, bool((body or {}).get("undo")))
+        except ledger.ValidationError as e:
             raise HTTPException(400, str(e))
 
     @app.get("/api/transactions/export.csv")

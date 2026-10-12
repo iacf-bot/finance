@@ -198,7 +198,7 @@ def compute(db: Database, ids: list[int], start, end, currency: str | None = Non
         elif src_in:
             if k in ("expense", "invest_fee"):
                 cash[src] -= amt
-            elif k in ("income", "refund", "dividend", "adjustment"):
+            elif k in ("income", "refund", "dividend", "adjustment", "reimbursement"):
                 cash[src] += amt
             elif k == "buy":
                 cash[src] -= amt
@@ -211,7 +211,7 @@ def compute(db: Database, ids: list[int], start, end, currency: str | None = Non
                     last_px[tk] = r["price"]
             if in_period:
                 v = amt * f[src]
-                if k in ("income", "refund"):
+                if k in ("income", "refund", "reimbursement"):
                     flow = v
                 elif k == "expense":
                     flow = -v

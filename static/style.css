@@ -213,3 +213,15 @@ table.upcoming td{padding:5px 6px}
 .pr-unexplained{background:#fdf0dc;color:#9a6200}.inv-cards{grid-template-columns:repeat(4,1fr)}.inv-cards .ic.unexp .val{color:#9a6200}.unexp-txt{color:#9a6200}
 @media (max-width:700px){.inv-cards{grid-template-columns:1fr 1fr}}
 @media (max-width:700px){.inv-cards .ic:first-child{grid-column:auto}}
+
+/* reimbursements 报销 */
+.pill.reimbursement,.pill.reimb{background:#e6f4f6;color:#127a8a}
+.reimb-box{border:1px dashed #cfe3e7;border-radius:10px;padding:8px 10px}.reimb-fields{margin-top:8px}
+.rb-st{display:inline-block;font-size:11px;padding:2px 6px;border-radius:6px;white-space:nowrap}
+.rb-pending{background:#fdecea;color:#c23b2c}.rb-partial{background:#fff3dc;color:#9a6200}.rb-settled{background:#e3f6ee;color:#0f8a5f}.rb-written_off{background:#eee;color:#666}
+.rb-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.rb-cards .ic{background:#f7f8fa;border-radius:10px;padding:10px 12px}
+.rb-cards .val{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}.rb-cards .lbl{font-size:12px;color:#777}
+.rb-flt{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}.rb-flt select,.rb-flt input{width:auto}
+.rb-bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rb-links{font-size:12px;color:#666}
+.rb-bar{padding-right:84px}

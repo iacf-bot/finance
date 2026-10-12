@@ -317,6 +317,20 @@ class Database:
             # account's opening balance that is prior returns (NULL/0 = all principal)
             if "pr_class" not in tcols:
                 con.execute("ALTER TABLE transactions ADD COLUMN pr_class TEXT")
+            # additive migration: reimbursements 报销 (flag + optional fields on expenses, links from receipts)
+            for col, typ in (("reimbursable", "INTEGER DEFAULT 0"), ("reimb_payer", "TEXT"), ("reimb_expected", "REAL"),
+                             ("reimb_note", "TEXT"), ("reimb_writeoff", "INTEGER DEFAULT 0")):
+                if col not in tcols:
+                    con.execute(f"ALTER TABLE transactions ADD COLUMN {col} {typ}")
+            con.execute("""CREATE TABLE IF NOT EXISTS reimb_links (id INTEGER PRIMARY KEY,
+                receipt_id INTEGER NOT NULL REFERENCES transactions(id), expense_id INTEGER NOT NULL REFERENCES transactions(id),
+                amount REAL NOT NULL, created_at TEXT DEFAULT (datetime('now','localtime')))""")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_rl_receipt ON reimb_links(receipt_id)")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_rl_expense ON reimb_links(expense_id)")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_tx_reimb ON transactions(reimbursable)")
+            # deleting a receipt or an expense removes its links (every delete path, incl. bulk/account/demo)
+            con.execute("""CREATE TRIGGER IF NOT EXISTS trg_tx_delete_reimb AFTER DELETE ON transactions BEGIN
+                DELETE FROM reimb_links WHERE receipt_id=OLD.id OR expense_id=OLD.id; END""")
             acols = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
             if "opening_returns" not in acols:
                 con.execute("ALTER TABLE accounts ADD COLUMN opening_returns REAL")

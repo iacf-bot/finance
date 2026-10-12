@@ -298,6 +298,33 @@ def prefill_from_parse(db: Database, res, text: str) -> dict:
     return {"prefill": prefill, "uncertain": unsure}
 
 
+# reimbursable 可报销 flag in quick-add: a leading "报销"/"可报销"/"reimb"/"reimbursable" word, or a tag
+# #报销 / #可报销 / #reimb / #reimbursable, optionally with the payer: "#报销:Acme" / "#reimb:Acme"
+REIMB_LEAD_RX = re.compile(r"^\s*(?:可?报销|reimb(?:ursable)?)(?:[:：]|\s+|(?=[\u3400-\u9fff]))", re.I)
+REIMB_TAG_RX = re.compile(r"(?<!\S)#(?:可?报销|reimb(?:ursable)?)(?:[:：]([^\s#]+))?(?=\s|$)", re.I)
+
+
+def split_reimb(text: str) -> tuple[str, bool, str | None]:
+    """(text without the flag, reimbursable?, payer)."""
+    t, payer, flag = text or "", None, False
+    m = REIMB_TAG_RX.search(t)
+    if m:
+        flag, payer = True, (m.group(1) or None)
+        t = (t[:m.start()] + t[m.end():]).strip()
+    m = REIMB_LEAD_RX.match(t)
+    if m and t[m.end():].strip():
+        flag, t = True, t[m.end():].strip()
+    return t, flag, payer
+
+
+def _reimb_msg(msg: str) -> str:
+    for a, b in (("Saved: ", "Saved (reimbursable): "), ("已记: ", "已记(可报销): "), ("Preview: ", "Preview (reimbursable): "),
+                 ("预览: ", "预览(可报销): "), ("Needs review: ", "Needs review (reimbursable): "), ("待确认: ", "待确认(可报销): ")):
+        if msg.startswith(a):
+            return b + msg[len(a):]
+    return msg
+
+
 def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | None = None,
               dry_run: bool = False, force_review: bool = False, threshold: float | None = None,
               external_id: str | None = None, allow_balance: bool = True) -> dict:
@@ -305,13 +332,21 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
         return quick_reconcile(db, text, ledger_id, dry_run)
     if allow_balance and BALANCE_RX.match(text or ""):
         return quick_set_balance(db, text, ledger_id, dry_run)
-    res = parse_quick_add(text, ledger.parse_ctx(db))
+    ptext, reimb, payer = split_reimb(text)
+    res = parse_quick_add(ptext if reimb else text, ledger.parse_ctx(db))
+    reimb = reimb and res.kind == "expense"
     th = float(threshold if threshold is not None else db.get_setting("review_threshold", "0.75"))
     status = "posted" if (res.confidence >= th and not force_review and res.amount and res.account_id) else "review"
     out = {"parsed": res.to_dict(), "confidence": res.confidence, "status": status, "threshold": th}
+    if reimb:
+        out["parsed"].update(reimbursable=True, reimb_payer=payer)
+        out["reimbursable"] = True
     if dry_run:
-        out.update(prefill_from_parse(db, res, text))
-        out["message"] = short_message(db, out, text, dry_run=True, force_review=force_review)
+        out.update(prefill_from_parse(db, res, ptext if reimb else text))
+        if reimb:
+            out["prefill"].update(reimbursable=True, reimb_payer=payer)
+        msg = short_message(db, out, ptext if reimb else text, dry_run=True, force_review=force_review)
+        out["message"] = _reimb_msg(msg) if reimb else msg
         return out
     data = {"kind": res.kind, "date": res.date, "amount": res.amount or 0, "currency": res.currency,
             "account_id": res.account_id, "to_account_id": res.to_account_id, "category_id": res.category_id,
@@ -319,6 +354,8 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
             "note": text.strip(), "source": source, "status": status, "confidence": res.confidence,
             "raw_text": text, "ledger_id": ledger_id or int(db.get_setting("default_ledger_id", "1") or 1),
             "external_id": external_id}
+    if reimb:
+        data.update(reimbursable=1, reimb_payer=payer)
     try:
         out["transaction"] = ledger.create_tx(db, data)
     except ledger.ValidationError as e:
@@ -326,7 +363,8 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
         out["status"] = "review"
         out["warning"] = str(e)
         out["transaction"] = ledger.create_tx(db, data)
-    out["message"] = short_message(db, out, text, force_review=force_review)
+    msg = short_message(db, out, ptext if reimb else text, force_review=force_review)
+    out["message"] = _reimb_msg(msg) if reimb else msg
     return out
 
 

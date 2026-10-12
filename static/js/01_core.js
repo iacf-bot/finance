@@ -31,7 +31,7 @@ function money(v, cur) {
 }
 const num = (v, d = 2) => v === null || v === undefined ? '' : Number(v).toLocaleString(undefined, {maximumFractionDigits: d});
 const confPill = c => c === null || c === undefined ? '' : `<span class="conf ${c >= .75 ? 'hi' : c >= .5 ? 'md' : 'lo'}">${Math.round(c * 100)}%</span>`;
-const kindLabel = {expense: 'Expense 支出', income: 'Income 收入', transfer: 'Transfer 转账', refund: 'Refund 退款', adjustment: 'Balance adj. 余额调整', buy: 'Buy 买入', sell: 'Sell 卖出', dividend: 'Dividend 分红', invest_fee: 'Fee 费用'};
+const kindLabel = {expense: 'Expense 支出', income: 'Income 收入', transfer: 'Transfer 转账', refund: 'Refund 退款', adjustment: 'Balance adj. 余额调整', buy: 'Buy 买入', sell: 'Sell 卖出', dividend: 'Dividend 分红', invest_fee: 'Fee 费用', reimbursement: 'Reimbursement 报销'};
 const srcLabel = {balance_set: 'Balance set 调整余额', opening_balance: 'Opening balance 期初余额', import: 'Import 导入', scheduled: '🔁 Scheduled 定时', reconcile: '✔ Reconcile 对账'};
 /* Reconciliation 对账: a transaction change dated on/before an account's latest checkpoint does not move today's balance.
    With Settings → General → lock on, the server answers 409 and we ask before retrying with confirm_reconciled. */
@@ -128,7 +128,7 @@ function typeOptions(selected) { return Object.entries(S.meta.account_types).map
 /* ---------- navigation ---------- */
 const ROUTES = [
   ['home', '🏠', 'Home 首页'], ['dashboard', '📊', 'Dashboard 仪表盘'], ['transactions', '🧾', 'Transactions 流水'], ['accounts', '🏦', 'Accounts 账户'],
-  ['investments', '📈', 'Investments 投资'], ['budgets', '🎯', 'Budgets 预算'], ['scheduled', '🔁', 'Scheduled 定时'], ['reports', '📉', 'Reports 报表'],
+  ['investments', '📈', 'Investments 投资'], ['budgets', '🎯', 'Budgets 预算'], ['scheduled', '🔁', 'Scheduled 定时'], ['reimb', '🧾', 'Reimbursements 报销中心'], ['reports', '📉', 'Reports 报表'],
   ['review', '📥', 'Quick add & Review 待确认'], ['settings', '⚙️', 'Settings 设置'],
 ];
 function renderNav() {
@@ -189,7 +189,7 @@ function catIcon(t) {
     [/educat|book|course|tuition/, '📚'], [/social|gift|red envelope|donat/, '🎁'], [/financ|insur|tax|fee|interest/, '🏦'], [/famil|kid|child|baby|pet/, '👪'],
     [/salary|work|wage|bonus|payroll/, '💼'], [/invest/, '📈']];
   for (const [re, ic] of map) if (re.test(n)) return ic;
-  return t.kind === 'income' ? '💵' : t.kind === 'refund' ? '↩️' : '🧾';
+  return t.kind === 'income' ? '💵' : t.kind === 'refund' ? '↩️' : t.kind === 'reimbursement' ? '💼' : '🧾';
 }
 async function route() {
   const [name, ...rest] = (location.hash.slice(2) || 'home').split('/');

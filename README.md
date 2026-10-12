@@ -516,3 +516,21 @@ curl -s -H "$H" "$B/api/accounts/7/investment-series?from=2026-01-01&to=2026-06-
 curl -s -H "$H" -X PUT "$B/api/transactions/123" -H 'Content-Type: application/json' -d '{"pr_class":"returns"}'
 curl -s -H "$H" -X PUT "$B/api/accounts/7" -H 'Content-Type: application/json' -d '{"opening_returns":2500}'
 ```
+
+## Reimbursements 报销
+
+- Flag any **expense** as *可报销 reimbursable* (quick/detail/edit forms, or the 报销中心 page). Optional: payer 报销方, expected amount (defaults to the expense amount), note.
+- Record money coming back as kind **`reimbursement` 报销到账**: it is an inflow to the chosen account (balances move normally) and is linked to one or more reimbursable expenses. Partial settlement is allowed; amounts are kept in each expense's own currency (multi-currency supported).
+- **Stats:** reimbursable expenses are excluded from home, dashboard, category reports and budgets; reimbursement receipts are not counted as income.
+- **Write off 核销:** gives up on the rest. The unreimbursed remainder counts as a normal expense again.
+- Deleting a receipt or an expense removes its links (DB trigger), so the expense goes back to pending.
+- Status: 待报销 pending / 部分报销 partial / 已报销 settled / written off.
+- Quick add (including Apple Watch / Shortcuts): start with `报销 …` or add `#报销`, `#reimb`, or `#报销:Payer`, e.g. `报销 打车 32 支付宝` or `hotel 389 chase #报销:Acme`.
+- The pre-existing *income* category "Reimbursement 报销" is unchanged. Old transactions in it stay income; use the new kind for new receipts.
+
+API:
+- `GET /api/reimbursements?status=open|pending|partial|settled|written_off|all&from=&to=&payer=&account_id=` returns items plus outstanding totals by currency and by payer.
+- `POST /api/reimbursements/receipts` takes `{account_id, date, amount?, payer?, note?, links:[{expense_id, amount?}]}`.
+- `GET /api/reimbursements/receipts` and `GET /api/reimbursements/receipts/{id}`.
+- `POST /api/reimbursements/mark` takes `{ids, reimbursable, payer?, expected?, note?}`.
+- `POST /api/reimbursements/{id}/write-off` takes `{undo?}`.

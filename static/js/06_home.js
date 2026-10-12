@@ -6,12 +6,13 @@ function homeRowHtml(t) {
   const title = t.kind === 'transfer' ? `${esc(t.account_name || '?')} → ${esc(t.to_account_name || '?')}`
     : t.kind === 'adjustment' ? (t.adj_reason === 'opening' ? 'Opening balance 期初余额' : `Balance adj. 余额调整 · ${esc(t.adj_reason_label || '')}`)
     : ['buy', 'sell', 'dividend', 'invest_fee'].includes(t.kind) ? `${kindLabel[t.kind]} ${esc(t.ticker || '')}`
+    : t.kind === 'reimbursement' ? `Reimbursement 报销到账${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}`
     : t.category_name ? `${esc(t.category_name)}${t.category_name_zh ? ` <span class="muted">${esc(t.category_name_zh)}</span>` : ''}` : 'Uncategorized 未分类';
   const what = [t.merchant_name, t.note].filter(Boolean).map(x => esc(String(x).slice(0, 60))).join(' · ');
   const where = t.kind === 'transfer' ? '' : esc(t.account_name || '');
   return `<div class="hrow" data-tx="${t.id}" role="button" tabindex="0">
     <div class="hico" aria-hidden="true">${catIcon(t)}</div>
-    <div class="hmain"><div class="htop">${title}${t.status === 'review' ? ' <span class="pill review">review</span>' : ''}${t.reconciled_id ? ' <span class="rec-badge" title="Reconciled 已对账">✔</span>' : ''}</div>
+    <div class="hmain"><div class="htop">${title}${t.status === 'review' ? ' <span class="pill review">review</span>' : ''}${t.kind === 'expense' && t.reimbursable ? ` <span class="pill reimb">${t.reimb_writeoff ? '已核销' : '可报销'}</span>` : ''}${t.reconciled_id ? ' <span class="rec-badge" title="Reconciled 已对账">✔</span>' : ''}</div>
       <div class="hsub">${what ? `<span class="hwhat">${what}</span>` : ''}<span class="muted">${esc(t.date.slice(5, 10))} ${esc(t.date.slice(11, 16))}${where ? ' · ' + where : ''}</span></div></div>
     <div class="hamt">${txAmount(t)}</div></div>`;
 }
