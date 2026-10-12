@@ -11,13 +11,11 @@ function acctRow(a) {
       ${a.reconciled_at ? `<div class="small"><a class="rec-link" href="javascript:void 0" data-rhist="${a.id}" title="Reconciliation history 对账记录">✔ Reconciled 已对账 ${esc(a.reconciled_at.slice(0, 10))}${a.reconciliation_count > 1 ? ` · ${a.reconciliation_count}×` : ''}</a></div>` : ''}
       ${a.type === 'credit_card' && a.credit_limit ? `<div class="small muted">Owed 欠款 ${money(a.owed, a.currency)} · Limit ${money(a.credit_limit, a.currency)} · Available ${money(a.available_credit, a.currency)}</div><div class="bar" style="max-width:260px"><i class="${a.owed / a.credit_limit > .8 ? 'over' : a.owed / a.credit_limit > .5 ? 'warn' : ''}" style="width:${Math.max(0, Math.min(100, a.owed / a.credit_limit * 100))}%"></i></div>` : ''}
       ${a.is_investment ? `<div class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</div>` : ''}
-      ${a.invest && showPR() ? `<div class="small pr-line">${prLine(a.invest)}</div>` : ''}</div>
+      </div>
       <div class="bal ${a.is_liability ? (a.owed > 0 ? 'neg' : zero ? '' : 'pos') : a.balance < 0 ? 'neg' : ''}">${a.is_liability ? `<span class="small muted">${a.owed >= 0 ? 'owed 欠' : 'credit 溢缴'} </span>${money(Math.abs(a.owed), a.currency)}` : money(a.balance, a.currency)}${a.currency !== S.meta.settings.base_currency ? `<div class="small muted">${money(a.balance_base)}</div>` : ''}</div>
       <div class="row acts" style="flex-wrap:nowrap"><a class="btn sm" href="#/account/${a.id}" title="Account history 账户明细">📜 <span class="hide-m">History 明细</span></a><button class="btn sm" data-adj="${a.id}" title="Enter the real balance; an adjustment transaction records the difference">⚖️ <span class="hide-m">Set balance 调整余额</span></button><button class="btn sm" data-rec="${a.id}" title="Compare with a statement and lock the balance at that date">✔ <span class="hide-m">Reconcile 对账</span></button><button class="btn sm" data-edit="${a.id}">Edit</button></div></div>`;
 }
-/* principal / returns line for investment accounts and groups (toggle: Accounts → "Principal & returns") */
-const PR_KEY = 'acctShowPR';
-const showPR = () => localStorage.getItem(PR_KEY) !== '0';
+/* principal / returns summary line (used by the Investments page; the Accounts tree no longer shows it) */
 function pctTxt(p) { return p === null || p === undefined ? '' : ` (${p >= 0 ? '+' : ''}${p.toFixed(1)}%)`; }
 function prLine(x) {
   const r = x.returns;
@@ -30,8 +28,7 @@ function groupTotal(n) {
     ? `<span class="small muted">${n.owed_base >= 0 ? 'owed 欠' : 'credit 溢缴'} </span><span class="${n.owed_base > 0 ? 'neg' : ''}">${money(Math.abs(n.owed_base), base)}</span>`
     : `<span class="${n.total_base < 0 ? 'neg' : ''}">${money(n.total_base, base)}</span>`;
   const subs = n.by_currency.map(c => `${c.currency} ${num(n.liability_group ? -c.total : c.total)}${c.currency !== base ? ` ≈ ${money(n.liability_group ? -c.total_base : c.total_base, base)}` : ''}`);
-  const pr = n.invest && showPR() ? `<div class="small pr-line gt-sub">${prLine(n.invest)}</div>` : '';
-  return pr + `<div class="gt-main" title="${esc((n.liability_group ? 'Owed by currency: ' : 'By currency: ') + subs.join(' · '))}">${main}</div>${n.mixed_currency ? `<div class="small muted gt-sub">${esc(subs.join(' · '))}</div>` : ''}`;
+  return `<div class="gt-main" title="${esc((n.liability_group ? 'Owed by currency: ' : 'By currency: ') + subs.join(' · '))}">${main}</div>${n.mixed_currency ? `<div class="small muted gt-sub">${esc(subs.join(' · '))}</div>` : ''}`;
 }
 function treeNode(n, byId, depth = 0) {
   const collapsed = !!treeState()[nodeKey(n)];
@@ -59,7 +56,6 @@ VIEWS.accounts = async (v) => {
   <div class="card" style="margin-top:16px"><h3 class="tree-h">Accounts 账户<span class="sp"></span>
     <button class="btn sm" id="expAll">▾ Expand all</button><button class="btn sm" id="colAll">▸ Collapse all</button>
     <label class="chk small"><input type="checkbox" id="hideZero" ${localStorage.getItem(ZERO_KEY) === '1' ? 'checked' : ''}> hide zero balances</label>
-    <label class="chk small"><input type="checkbox" id="showPR" ${showPR() ? 'checked' : ''}> principal &amp; returns 本金/收益</label>
     <label class="chk small"><input type="checkbox" id="showArch" ${localStorage.getItem(ARCH_KEY) === '1' ? 'checked' : ''}> show archived</label>
     <button class="btn sm" id="grpBtn">Groups 分组</button><button class="btn sm pri" id="addAcct">+ Add account</button></h3>
   ${!d.accounts.length ? '<div class="empty">No accounts yet. Add your bank accounts, cards, e-wallets, brokerage accounts, loans…</div>' : ''}
@@ -70,7 +66,6 @@ VIEWS.accounts = async (v) => {
   const all = c => { $$('.tnode').forEach(n => { n.classList.toggle('collapsed', c); const g = $('.tgroup', n); g.setAttribute('aria-expanded', !c); $('.chev', g).textContent = c ? '▸' : '▾'; setCollapsed(n.dataset.node, c); }); };
   $('#expAll').onclick = () => all(false); $('#colAll').onclick = () => all(true);
   $('#hideZero').onchange = e => { localStorage.setItem(ZERO_KEY, e.target.checked ? '1' : '0'); applyAcctFilters(); };
-  $('#showPR').onchange = e => { localStorage.setItem(PR_KEY, e.target.checked ? '1' : '0'); route(); };
   $('#showArch').onchange = e => { localStorage.setItem(ARCH_KEY, e.target.checked ? '1' : '0'); applyAcctFilters(); };
   applyAcctFilters();
   $('#addAcct').onclick = () => acctForm();
@@ -253,6 +248,7 @@ VIEWS.investments = async (v) => {
    <div class="card stat"><div class="lbl">Market value 市值</div><div class="val">${money(totMV)}</div></div>
    <div class="card stat"><div class="lbl">Cost basis 成本</div><div class="val">${money(totCost)}</div></div>
    <div class="card stat"><div class="lbl">Unrealized P/L 浮动盈亏</div><div class="val ${totMV - totCost >= 0 ? 'pos' : 'neg'}">${money(totMV - totCost)}</div></div></div>
+  <div class="card" style="margin-top:16px" id="prCard"></div>
   <div class="card" style="margin-top:16px" id="retCard"></div>
   <div class="card" style="margin-top:16px"><h3>Holdings 持仓<span class="sp"></span><button class="btn sm" id="refresh">↻ Refresh quotes (Yahoo)</button><button class="btn sm" id="manual">Set price manually</button><button class="btn sm pri" id="trade">+ Record trade</button></h3>
   ${!d.accounts.length ? '<div class="empty">Add a Brokerage / Retirement / Crypto account first (Accounts → Add account).</div>' : ''}
@@ -263,6 +259,7 @@ VIEWS.investments = async (v) => {
   <div class="grid g2" style="margin-top:16px"><div class="card"><h3>Investment accounts</h3>${d.accounts.map(a => `<div class="acct"><div class="nm"><b>${esc(a.name)}</b><span class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</span></div><div class="bal">${money(a.balance, a.currency)}</div></div>`).join('') || '<div class="empty">None</div>'}</div>
   <div class="card"><h3>Recent trades 交易记录</h3>${txTable(d.trades.slice(0, 20), {compact: true})}</div></div>`;
   bindTxRows(v);
+  renderPR();
   renderReturns();
   const inv = S.meta.accounts.find(a => S.meta.account_types[a.type].investment && !a.archived);
   $('#trade').onclick = () => openTx(null, null, {kind: 'buy', account_id: inv ? inv.id : ''});
@@ -273,8 +270,9 @@ VIEWS.investments = async (v) => {
 
 /* ---------- investment returns 投资收益 ---------- */
 const RET_TIPS = {
-  gain: 'Gain = end value − start value − net contributions. Includes Investment gain/loss and Interest adjustments, dividends, fees and market gains on tracked holdings.',
-  contrib: 'Money put in from outside: transfers in, income recorded on the account, and adjustments classified Correction/Opening/Unrecorded.',
+  gain: 'Gain = returns 投资收益, same as the account pages: Investment gain/loss and Interest adjustments, dividends, fees and market gains on tracked holdings. Unclassified adjustments are NOT gain; they are in Unexplained.',
+  unexp: 'Unexplained 未分类 = unclassified balance adjustments (e.g. imported 余额变更; reclassify them) + reconciliation gaps. End value − start value = net contributions + gain + unexplained.',
+  contrib: 'Principal 本金 put in: transfers in, income recorded on the account, and adjustments classified Opening/Unrecorded (same as the account pages).',
   withdraw: 'Money taken out: transfers out to non-investment accounts (for a group: outside the group) and expenses paid from the account.',
   simple: 'Simple return = gain ÷ (start value + net contributions). Easy to read but ignores WHEN money was added.',
   md: 'Money-weighted return (Modified Dietz) = gain ÷ (start value + Σ contribution × share of the period it was invested). Money added late in the period counts less. Not annualized.',
@@ -296,6 +294,7 @@ async function renderReturns() {
     <td>${x.level === 'account' ? '<span class="ind"></span>' : ''}${x.level === 'account' ? esc(x.name) : `<b>${esc(x.name)}</b>`}${x.archived ? ' <span class="small muted">(archived)</span>' : ''}</td>
     <td class="right">${money(x.start_value, cur)}</td><td class="right">${money(x.contributions, cur)}</td><td class="right">${money(x.withdrawals, cur)}</td>
     <td class="right">${money(x.end_value, cur)}</td><td class="right"><b class="${x.gain >= 0 ? 'pos' : 'neg'}">${money(x.gain, cur)}</b></td>
+    <td class="right">${Math.abs(x.unexplained || 0) >= 0.01 ? `<span class="unexp-txt">${money(x.unexplained, cur)}</span>` : '<span class="muted">—</span>'}</td>
     <td class="right">${pctCell(x.simple_return)}</td><td class="right">${pctCell(x.md_return)}</td>
     <td class="right">${x.days > 365 ? pctCell(x.annualized) + (x.xirr !== null ? `<div class="small muted">XIRR ${pctCell(x.xirr, false)}</div>` : '') : r.period === 'all' && x.xirr !== null ? `<span class="small muted">XIRR</span> ${pctCell(x.xirr)}` : '<span class="muted">—</span>'}</td></tr>`;
   const comp = total ? total.components : {};
@@ -311,7 +310,7 @@ async function renderReturns() {
      <div class="stat"><div class="lbl" title="${RET_TIPS.simple}">Simple return 简单收益率 ⓘ</div><div class="val">${pctCell(total.simple_return)}</div></div>
      <div class="stat"><div class="lbl" title="${RET_TIPS.md}">Money-weighted 资金加权 ⓘ</div><div class="val">${pctCell(total.md_return)}</div><div class="small muted" title="${RET_TIPS.ann}">${total.days > 365 ? `annualized ${pctCell(total.annualized, false)} · ` : ''}${total.xirr !== null ? `XIRR ${pctCell(total.xirr, false)}/yr` : ''}</div></div>
    </div>
-   <div class="scroll-x" style="margin-top:12px"><table class="t ret-table"><thead><tr><th>Account / group</th><th class="right">Start value 期初</th><th class="right" title="${RET_TIPS.contrib}">Contributions 投入 ⓘ</th><th class="right" title="${RET_TIPS.withdraw}">Withdrawals 取出 ⓘ</th><th class="right">End value 期末</th><th class="right" title="${RET_TIPS.gain}">Gain 收益 ⓘ</th><th class="right" title="${RET_TIPS.simple}">Simple ⓘ</th><th class="right" title="${RET_TIPS.md}">Money-wtd ⓘ</th><th class="right" title="${RET_TIPS.ann}">Annualized ⓘ</th></tr></thead>
+   <div class="scroll-x" style="margin-top:12px"><table class="t ret-table"><thead><tr><th>Account / group</th><th class="right">Start value 期初</th><th class="right" title="${RET_TIPS.contrib}">Contributions 投入 ⓘ</th><th class="right" title="${RET_TIPS.withdraw}">Withdrawals 取出 ⓘ</th><th class="right">End value 期末</th><th class="right" title="${RET_TIPS.gain}">Gain 收益 ⓘ</th><th class="right" title="${RET_TIPS.unexp}">Unexplained 未分类 ⓘ</th><th class="right" title="${RET_TIPS.simple}">Simple ⓘ</th><th class="right" title="${RET_TIPS.md}">Money-wtd ⓘ</th><th class="right" title="${RET_TIPS.ann}">Annualized ⓘ</th></tr></thead>
    <tbody>${total ? row(total) : ''}${ordered.map(row).join('')}</tbody></table></div>
    <div class="grid g2" style="margin-top:14px">
      <div><h4 style="margin:0 0 6px">Cumulative gain 累计收益 · ${esc(d.scope.name)}</h4><div class="chart-box" style="height:260px"><canvas id="retChart"></canvas></div></div>
