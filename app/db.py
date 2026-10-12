@@ -334,6 +334,12 @@ class Database:
             acols = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
             if "opening_returns" not in acols:
                 con.execute("ALTER TABLE accounts ADD COLUMN opening_returns REAL")
+            # mailbox schedule: interval (default, existing behaviour) or fixed local times (additive)
+            mcols = {r[1] for r in con.execute("PRAGMA table_info(mailboxes)")}
+            for col, ddl in (("schedule_mode", "TEXT DEFAULT 'interval'"), ("schedule_times", "TEXT DEFAULT ''"),
+                             ("schedule_weekdays", "TEXT DEFAULT ''"), ("last_slot", "TEXT"), ("schedule_since", "TEXT")):
+                if col not in mcols:
+                    con.execute(f"ALTER TABLE mailboxes ADD COLUMN {col} {ddl}")
             # email rules: kind 'balance' (statement balance -> set-balance adjustment) + its reason (additive)
             if "adjust_reason" not in {r[1] for r in con.execute("PRAGMA table_info(email_rules)")}:
                 con.execute("ALTER TABLE email_rules ADD COLUMN adjust_reason TEXT DEFAULT ''")

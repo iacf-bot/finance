@@ -699,16 +699,20 @@ def poll_mailbox(db: Database, mb: dict, secret: SecretBox, max_messages: int = 
     return {"status": status, **stats}
 
 
-def due_mailboxes(db: Database) -> list[dict]:
+def due_mailboxes(db: Database, now: datetime | None = None) -> list[dict]:
+    """Enabled mailboxes due for a check: interval mode = last check older than interval_minutes; fixed mode = the
+    latest scheduled time (app time zone) hasn't run yet (catches up once after downtime). Fixed-time slots are
+    claimed atomically here, so a slot is polled at most once."""
+    from . import mail_schedule as ms
     out = []
-    now = datetime.now()
     for mb in db.all("SELECT * FROM mailboxes WHERE enabled=1"):
-        last = mb.get("last_checked_at")
-        if not last:
-            out.append(mb); continue
         try:
-            if now - datetime.strptime(last, "%Y-%m-%d %H:%M:%S") >= timedelta(minutes=max(1, int(mb.get("interval_minutes") or 15))):
-                out.append(mb)
-        except ValueError:
-            out.append(mb)
+            due, key = ms.is_due(db, mb, now)
+        except ms.ScheduleError:
+            continue
+        if not due:
+            continue
+        if key and not ms.claim(db, mb["id"], key):
+            continue
+        out.append(mb)
     return out

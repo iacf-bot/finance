@@ -568,3 +568,18 @@ API:
   - `last4_regex`: `Account:\s*X+(\d{4})`
   - `adjust_reason`: gain/loss
 - **API:** `GET /api/email-rules/templates`. The `adjust_reason` field is on `/api/email-rules`.
+
+## Email monitoring schedule 检查计划
+- Each mailbox polls either **every N minutes** (`schedule_mode: "interval"`, the default; existing mailboxes keep it) or at **fixed times** (`schedule_mode: "fixed"`).
+- **Fixed times:**
+  - `schedule_times` takes one or more `HH:MM` in the app time zone (Settings → `timezone`), e.g. `08:00,21:30`.
+  - `schedule_weekdays` is optional, using 0=Mon … 6=Sun; blank means every day.
+- **Runner:**
+  - It checks every 30 s and polls when a scheduled time arrives.
+  - If the app was down at that time, it runs **once** when it comes back (the latest missed time only).
+  - Each time is claimed atomically (`last_slot`), so it never runs twice.
+  - Switching to fixed times, or changing them, doesn't catch up earlier times.
+  - **Check now** still polls immediately and doesn't affect the schedule.
+- **API:**
+  - `GET /api/mailboxes` adds `schedule_text`, `next_run` (local `YYYY-MM-DD HH:MM`), `timezone`, `last_checked_at` and `last_slot`.
+  - POST and PUT accept `schedule_mode`, `schedule_times` and `schedule_weekdays`.

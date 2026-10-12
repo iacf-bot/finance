@@ -1113,11 +1113,18 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     # ------------------------------------------------------------ email monitoring
     MB_FIELDS = ["name", "host", "port", "use_ssl", "username", "folder", "interval_minutes", "enabled",
                  "sender_allowlist", "subject_keywords", "after_action", "move_folder", "default_account_id",
-                 "auto_post", "lookback_days"]
+                 "auto_post", "lookback_days", "schedule_mode", "schedule_times", "schedule_weekdays"]
 
     def _mb_public(m: dict) -> dict:
+        from . import mail_schedule as ms
         m = dict(m)
         m["password_set"] = bool(m.pop("password_enc", None))
+        m["schedule_mode"] = m.get("schedule_mode") or "interval"
+        try:
+            m["next_run"], m["schedule_text"] = ms.next_run(db, m), ms.describe(m)
+        except ms.ScheduleError as e:
+            m["next_run"], m["schedule_text"] = None, f"invalid schedule: {e}"
+        m["timezone"] = str(ms.tz(db))
         return m
 
     def _mb_data(body: dict) -> dict:
@@ -1132,9 +1139,35 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             raise HTTPException(400, "after_action: none | mark_read | move")
         if "default_account_id" in d:
             d["default_account_id"] = int(d["default_account_id"]) if d["default_account_id"] else None
+        from . import mail_schedule as ms
+        try:
+            if "schedule_mode" in d:
+                d["schedule_mode"] = (d["schedule_mode"] or "interval").strip()
+                if d["schedule_mode"] not in ms.MODES:
+                    raise ms.ScheduleError("schedule_mode: interval | fixed")
+            if "schedule_times" in d:
+                d["schedule_times"] = ",".join(ms.parse_times(d["schedule_times"]))
+            if "schedule_weekdays" in d:
+                d["schedule_weekdays"] = ",".join(map(str, ms.parse_weekdays(d["schedule_weekdays"])))
+        except ms.ScheduleError as e:
+            raise HTTPException(400, str(e))
         if body.get("password"):
             d["password_enc"] = secret.encrypt(str(body["password"]))
         return d
+
+    def _mb_schedule(before: dict | None, d: dict) -> None:
+        """Validates the merged schedule before saving. Fixed mode needs at least one time; switching to fixed (or
+        changing its times/days) starts counting from now, so earlier slots aren't caught up."""
+        from . import mail_schedule as ms
+        m = {**(before or {}), **d}
+        if (m.get("schedule_mode") or "interval") != "fixed":
+            return
+        if not ms.parse_times(m.get("schedule_times") or ""):
+            raise HTTPException(400, "Fixed times: add at least one time (HH:MM)")
+        keys = ("schedule_mode", "schedule_times", "schedule_weekdays")
+        if not before or any((before.get(k) or "") != (m.get(k) or "") for k in keys):
+            d["schedule_since"] = ms.local_now(db).strftime(ms.FMT)
+            d["last_slot"] = None
 
     @app.get("/api/mailboxes")
     def mailboxes():
@@ -1147,6 +1180,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             if not d.get(k):
                 raise HTTPException(400, f"{k} required")
         d.setdefault("folder", "INBOX")
+        _mb_schedule(None, d)
         with db.tx() as con:
             cols = list(d)
             mid = con.execute(f"INSERT INTO mailboxes({','.join(cols)}) VALUES({','.join('?' * len(cols))})", [d[c] for c in cols]).lastrowid
@@ -1155,6 +1189,10 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     @app.put("/api/mailboxes/{mid}")
     def upd_mailbox(mid: int, body: dict = Body(...)):
         d = _mb_data(body)
+        before = db.one("SELECT * FROM mailboxes WHERE id=?", (mid,))
+        if not before:
+            raise HTTPException(404, "Mailbox not found")
+        _mb_schedule(before, d)
         if d:
             with db.tx() as con:
                 con.execute(f"UPDATE mailboxes SET {','.join(k + '=?' for k in d)} WHERE id=?", list(d.values()) + [mid])
