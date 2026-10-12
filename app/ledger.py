@@ -9,13 +9,18 @@ from typing import Any
 
 from .db import ACCOUNT_TYPES, ADJ_REASONS, Database, now_iso
 
-KINDS = ["expense", "income", "transfer", "refund", "adjustment", "buy", "sell", "dividend", "invest_fee"]
+KINDS = ["expense", "income", "transfer", "refund", "adjustment", "buy", "sell", "dividend", "invest_fee", "reimbursement"]
 INVEST_KINDS = {"buy", "sell", "dividend", "invest_fee"}
 
 # signed effect on the *source* account
 EFFECT_SQL = """CASE kind WHEN 'expense' THEN -amount WHEN 'income' THEN amount WHEN 'refund' THEN amount
   WHEN 'transfer' THEN -amount WHEN 'adjustment' THEN amount WHEN 'buy' THEN -amount WHEN 'sell' THEN amount
-  WHEN 'dividend' THEN amount WHEN 'invest_fee' THEN -amount ELSE 0 END"""
+  WHEN 'dividend' THEN amount WHEN 'invest_fee' THEN -amount WHEN 'reimbursement' THEN amount ELSE 0 END"""
+# Reimbursements 报销: a reimbursable expense (not written off) is not an expense in reports, and a reimbursement
+# receipt (kind 'reimbursement') is not income. A written-off expense counts only its unreimbursed part.
+REIMB_SETTLED_SQL = "COALESCE((SELECT SUM(l.amount) FROM reimb_links l WHERE l.expense_id=t.id),0)"
+REPORT_AMOUNT_SQL = f"""CASE WHEN t.kind='expense' AND COALESCE(t.reimbursable,0)=1 THEN
+  (CASE WHEN COALESCE(t.reimb_writeoff,0)=1 THEN MAX(t.amount - {REIMB_SETTLED_SQL}, 0) ELSE 0 END) ELSE t.amount END"""
 
 
 class ValidationError(ValueError):
@@ -242,6 +247,10 @@ def account_tree(db: Database, accts: list[dict] | None = None, include_empty: b
             by_currency=[{"currency": c, "total": round(v, 2) + 0.0, "total_base": round(convert(v, c, base, rates), 2) + 0.0}
                          for c, v in sorted(by_cur.items(), key=lambda kv: (kv[0] != base, kv[0]))],
             mixed_currency=len(by_cur) > 1, children=[])
+        from .principal import group_totals
+        inv = group_totals(members, base, rates)
+        if inv:
+            n["invest"] = inv
         out.append(n)
     return out
 
@@ -356,7 +365,7 @@ def parse_ctx(db: Database) -> dict:
 TX_FIELDS = ["ledger_id", "kind", "date", "amount", "currency", "account_id", "to_account_id", "to_amount",
              "orig_amount", "orig_currency", "category_id", "merchant_id", "member_id", "project_id", "tags", "note",
              "source", "attachment", "status", "confidence", "raw_text", "external_id", "ticker", "shares", "price",
-             "fee", "is_demo"]
+             "fee", "is_demo", "pr_class", "reimbursable", "reimb_payer", "reimb_expected", "reimb_note"]
 
 
 def _norm_date(d: Any) -> str:
@@ -411,6 +420,30 @@ def normalize_tx(con, data: dict, rates: dict[str, float], existing: dict | None
                 tx[k] = float(tx[k])
             except (TypeError, ValueError):
                 raise ValidationError(f"{k} must be a number")
+    if "pr_class" in tx:  # principal/returns override for investment accounts ('' / 'auto' = automatic)
+        pc = str(tx.get("pr_class") or "").strip().lower()
+        if pc in ("", "auto", "none", "null"):
+            tx["pr_class"] = None
+        elif pc in ("principal", "returns", "unexplained", "other"):
+            tx["pr_class"] = "unexplained" if pc == "other" else pc
+        else:
+            raise ValidationError("pr_class must be principal, returns, unexplained or auto")
+    if "reimbursable" in tx or kind != "expense":  # 可报销 flag only on expenses
+        flag = tx.get("reimbursable")
+        flag = flag if isinstance(flag, bool) else str(flag or "").strip().lower() in ("1", "true", "yes", "on")
+        tx["reimbursable"] = 1 if (flag and kind == "expense") else 0
+        if not tx["reimbursable"]:
+            tx["reimb_writeoff"] = 0
+    for k in ("reimb_payer", "reimb_note"):
+        if k in tx:
+            tx[k] = (str(tx[k]).strip() or None) if tx[k] is not None else None
+    if tx.get("reimb_expected") in ("", None):
+        tx["reimb_expected"] = None
+    elif "reimb_expected" in tx:
+        try:
+            tx["reimb_expected"] = round(abs(float(tx["reimb_expected"])), 2)
+        except (TypeError, ValueError):
+            raise ValidationError("reimb_expected must be a number")
     acct = con.execute("SELECT * FROM accounts WHERE id=?", (tx["account_id"],)).fetchone() if tx.get("account_id") else None
     if tx.get("account_id") and not acct:
         raise ValidationError("Account not found")
@@ -471,7 +504,7 @@ def normalize_tx(con, data: dict, rates: dict[str, float], existing: dict | None
         else:  # unclassified: the parent category (treated as Correction/other, or Opening balance for opening rows)
             r = con.execute("SELECT id FROM categories WHERE kind='adjustment' AND parent_id IS NULL ORDER BY id LIMIT 1").fetchone()
             tx["category_id"] = r[0] if r else None
-    elif kind in ("transfer",) + tuple(INVEST_KINDS):
+    elif kind in ("transfer", "reimbursement") + tuple(INVEST_KINDS):
         tx["category_id"] = tx.get("category_id") if kind == "dividend" else None
     if kind != "adjustment" and tx.get("category_id") and con.execute(
             "SELECT 1 FROM categories WHERE id=? AND kind='adjustment'", (tx["category_id"],)).fetchone():
@@ -502,9 +535,17 @@ def update_tx(db: Database, tid: int, data: dict) -> dict:
             # editing a converted row: keep the stored (account currency) amount unless a new one is sent
             ex["currency"] = None
         tx = normalize_tx(con, data, rates, existing=ex)
+        linked = con.execute("SELECT COUNT(*) FROM reimb_links WHERE expense_id=? OR receipt_id=?", (tid, tid)).fetchone()[0]
+        if linked:
+            if ex["kind"] == "expense" and (tx["kind"] != "expense" or not tx.get("reimbursable")):
+                raise ValidationError("This expense has reimbursement receipts linked: delete those receipts (or write it off) first")
+            if ex["kind"] == "reimbursement" and tx["kind"] != "reimbursement":
+                con.execute("DELETE FROM reimb_links WHERE receipt_id=?", (tid,))  # no longer a receipt: unlink
         tx["updated_at"] = now_iso()
         cols = [k for k in TX_FIELDS + ["updated_at"] if k in tx]
         con.execute(f"UPDATE transactions SET {','.join(c + '=?' for c in cols)} WHERE id=?", [tx[k] for k in cols] + [tid])
+        if not tx.get("reimbursable"):
+            con.execute("UPDATE transactions SET reimb_writeoff=0 WHERE id=?", (tid,))
     return get_tx(db, tid)
 
 
@@ -608,7 +649,7 @@ def _summary(db: Database, w: str, params: list) -> dict:
     """Count and income/expense sums (base currency) of everything matching a filter (for list headers)."""
     base = db.get_setting("base_currency", "USD"); rates = fx_rates(db)
     inc = exp = 0.0; n = 0
-    for r in db.all(f"SELECT t.kind, t.currency, SUM(t.amount) s, COUNT(*) n FROM ({TX_SELECT}{w}) t GROUP BY t.kind, t.currency", params):
+    for r in db.all(f"SELECT t.kind, t.currency, SUM({REPORT_AMOUNT_SQL}) s, COUNT(*) n FROM ({TX_SELECT}{w}) t GROUP BY t.kind, t.currency", params):
         n += r["n"]
         v = convert(r["s"] or 0, r["currency"], base, rates)
         if r["kind"] == "income":
@@ -646,7 +687,7 @@ def tx_effect_for(t: dict, aid: int) -> float:
     k, amt = t["kind"], t["amount"] or 0
     if t.get("account_id") == aid:
         return {"expense": -amt, "income": amt, "refund": amt, "transfer": -amt, "adjustment": amt, "buy": -amt,
-                "sell": amt, "dividend": amt, "invest_fee": -amt}.get(k, 0.0)
+                "sell": amt, "dividend": amt, "invest_fee": -amt, "reimbursement": amt}.get(k, 0.0)
     if k == "transfer" and t.get("to_account_id") == aid:
         return t["to_amount"] if t.get("to_amount") is not None else amt
     return 0.0
@@ -683,7 +724,7 @@ def balance_before(seq: list[tuple[str, int, float]], cps: list[dict], when: str
     return round(bal, 2) + 0.0
 
 
-HISTORY_PERIODS = {"1M": 1, "3M": 3, "6M": 6, "1Y": 12}
+HISTORY_PERIODS = {"1M": 1, "3M": 3, "6M": 6, "1Y": 12, "3Y": 36}
 
 
 def period_start(period: str, today: date | None = None) -> str | None:
@@ -723,6 +764,10 @@ def account_history(db: Database, aid: int, f: dict, today: date | None = None) 
         t["running_shown"] = None if b is None else round(b * sign, 2) + 0.0
         t["account_effect"] = round(tx_effect_for(t, aid), 2) + 0.0
     out = {"account": a, "period": period, "start": start, "end": end, "cash_only": bool(a.get("is_investment")), **page}
+    from .principal import history_extras
+    inv = history_extras(db, a, page["items"], start, end, not f.get("before"), today)
+    if inv:
+        out["invest"] = inv
     if not f.get("before"):
         cps = db.all("SELECT as_of, cash_balance FROM reconciliations WHERE account_id=? ORDER BY as_of, id", (aid,))
         opening = float(db.one("SELECT opening_balance FROM accounts WHERE id=?", (aid,))["opening_balance"] or 0)
@@ -772,9 +817,9 @@ def _flow_rows(db: Database, start: str, end: str, ledger_id: int | None):
     params: list[Any] = [start, end]
     if ledger_id:
         cond += " AND t.ledger_id=?"; params.append(ledger_id)
-    rows = db.all(f"""SELECT t.kind, t.amount, t.currency, t.date, t.category_id, c.parent_id, t.member_id, t.merchant_id,
-        t.project_id, t.account_id, t.tags FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
-        WHERE {cond} AND t.kind IN ('expense','income','refund')""", params)
+    rows = [r for r in db.all(f"""SELECT t.kind, {REPORT_AMOUNT_SQL} amount, t.currency, t.date, t.category_id, c.parent_id,
+        t.member_id, t.merchant_id, t.project_id, t.account_id, t.tags FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
+        WHERE {cond} AND t.kind IN ('expense','income','refund')""", params) if not (r["kind"] == "expense" and not r["amount"])]
     for r in db.all(f"""SELECT t.amount, t.currency, t.date, t.category_id, t.member_id, t.merchant_id, t.project_id,
         t.account_id, t.tags, {REASON_SQL} reason FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
         LEFT JOIN accounts a ON a.id=t.account_id

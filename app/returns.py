@@ -97,7 +97,7 @@ def first_activity(db: Database, ids: list[int]) -> str | None:
 
 
 def compute(db: Database, ids: list[int], start, end, currency: str | None = None, series: bool = False,
-            today: date | None = None) -> dict:
+            today: date | None = None, points: list[date] | None = None) -> dict:
     """Returns for the set of accounts `ids` between start and end dates (inclusive)."""
     today = today or date.today()
     s, e = _d(start), _d(end)
@@ -142,7 +142,9 @@ def compute(db: Database, ids: list[int], start, end, currency: str | None = Non
     contributions = withdrawals = trade_cash = internal_fx = 0.0
     flows: list[tuple[datetime, float]] = []
     checkpoints: list[date] = []
-    if series:
+    if series and points:
+        checkpoints = sorted(p for p in points if s <= p <= e)
+    elif series:
         if T <= 62:
             checkpoints = [s + timedelta(days=i) for i in range(T)]
         else:
@@ -161,7 +163,7 @@ def compute(db: Database, ids: list[int], start, end, currency: str | None = Non
         nonlocal ci
         while ci < len(checkpoints) and (dstr is None or checkpoints[ci].strftime("%Y-%m-%d 23:59") < dstr):
             c = checkpoints[ci]
-            pts.append({"date": c.isoformat(), "value": round(value(c), 2),
+            pts.append({"date": c.isoformat(), "value": round(value(c), 2), "holdings": round(holdings_value(c), 2),
                         "cumulative_gain": round(value(c) - v0 - flow_sum, 2), "net_contributions": round(flow_sum, 2)})
             ci += 1
 
@@ -196,7 +198,7 @@ def compute(db: Database, ids: list[int], start, end, currency: str | None = Non
         elif src_in:
             if k in ("expense", "invest_fee"):
                 cash[src] -= amt
-            elif k in ("income", "refund", "dividend", "adjustment"):
+            elif k in ("income", "refund", "dividend", "adjustment", "reimbursement"):
                 cash[src] += amt
             elif k == "buy":
                 cash[src] -= amt
@@ -209,7 +211,7 @@ def compute(db: Database, ids: list[int], start, end, currency: str | None = Non
                     last_px[tk] = r["price"]
             if in_period:
                 v = amt * f[src]
-                if k in ("income", "refund"):
+                if k in ("income", "refund", "reimbursement"):
                     flow = v
                 elif k == "expense":
                     flow = -v
@@ -318,7 +320,8 @@ def report(db: Database, period: str = "ytd", start=None, end=None, scope: str =
 
 
 # ---------------------------------------------------------------- one-time reclassify tool (preview first)
-def reclassify_preview(db: Database, include_savings: bool = False, account_ids: list[int] | None = None) -> dict:
+def reclassify_preview(db: Database, include_savings: bool = False, account_ids: list[int] | None = None,
+                       only: bool = False) -> dict:
     """Unclassified (Correction/other) balance adjustments on investment-type accounts — plus savings accounts when
     include_savings, plus any explicitly listed accounts — with a proposed reason. Read-only.
     The first record of an account (nothing earlier on it) is proposed as 'Opening balance': a 随手记 export has no
@@ -327,7 +330,9 @@ def reclassify_preview(db: Database, include_savings: bool = False, account_ids:
     tq = ",".join(f"'{t}'" for t in types)
     extra = [int(i) for i in (account_ids or [])]
     acond = f"a.type IN ({tq})" + (f" OR a.id IN ({','.join('?' * len(extra))})" if extra else "")
-    rows = db.all(f"""SELECT t.id, t.date, t.amount, t.currency, t.note, t.source, t.account_id, a.name account_name,
+    if only and extra:  # just these accounts (account detail page hint)
+        acond = f"a.id IN ({','.join('?' * len(extra))})"
+    rows = db.all(f"""SELECT t.id, t.date, t.amount, t.currency, t.note, t.source, t.pr_class, t.account_id, a.name account_name,
         a.type account_type, {REASON_SQL} reason FROM transactions t JOIN accounts a ON a.id=t.account_id
         LEFT JOIN categories c ON c.id=t.category_id
         WHERE t.kind='adjustment' AND t.status='posted' AND ({acond}) ORDER BY a.name, t.date, t.id""", extra)

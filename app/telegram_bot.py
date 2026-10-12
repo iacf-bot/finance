@@ -19,8 +19,8 @@ log = logging.getLogger("finance.telegram")
 
 
 def _fmt(res: dict) -> str:
-    if res.get("action") == "set_balance":
-        return ("⚖️ " if res.get("status") == "posted" else "ℹ️ ") + res.get("message", "")
+    if res.get("action") in ("set_balance", "reconcile"):
+        return ("⚖️ " if res.get("status") == "posted" else "ℹ️ ") + (res.get("detail") or res.get("message", ""))
     t = res.get("transaction") or {}
     p = res["parsed"]
     head = "✅ Recorded" if res["status"] == "posted" else "📝 Sent to To-review"

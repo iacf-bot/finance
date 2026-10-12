@@ -64,7 +64,7 @@ def _effect(t: dict, aid: int) -> float:
             return t["to_amount"] if t["to_amount"] is not None else amt
         return -amt
     return {"expense": -amt, "income": amt, "refund": amt, "adjustment": amt, "buy": -amt, "sell": amt,
-            "dividend": amt, "invest_fee": -amt}.get(k, 0)
+            "dividend": amt, "invest_fee": -amt, "reimbursement": amt}.get(k, 0)
 
 
 def preview(db: Database, aid: int, as_of=None, balance=None, as_owed=None) -> dict:
