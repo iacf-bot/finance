@@ -522,7 +522,7 @@ curl -s -H "$H" -X PUT "$B/api/accounts/7" -H 'Content-Type: application/json' -
 - The principal / returns / unexplained summary lives on **Investments**. The Accounts tree no longer shows it, though the API still returns the `invest` fields on accounts and groups.
 - There is one row per investment account: value, principal 本金投入, returns 投资收益 (amount and % of principal), unexplained 未分类, and returns for the selected period (money-weighted %).
 - The table has group subtotals in the base currency, totals by currency, and an overall total.
-- A range filter (1M/3M/6M/YTD/1Y/3Y/All/Custom) drives a combined principal vs returns (vs value) chart. Each row opens the account detail page.
+- A range filter (1M/3M/6M/YTD/1Y/3Y/All/Custom) drives a combined principal vs returns (vs value) chart. Each row opens the account detail inside Investments (`#/investments/account/<id>`): the Investments nav item stays highlighted, and the back button (or browser back) returns to the list with the same range and scroll position. Accounts page links still open `#/account/<id>`.
 - The figures are as of the end of the range. When the range ends today they equal the account page header.
 - `GET /api/investments/principal-returns?from=&to=&interval=auto|day|week|month&include_archived=` returns `accounts`, `groups`, `by_currency`, `total`, and `series`.
 - The **Investment returns** report uses the same logic:
