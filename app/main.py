@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import config, demo, importers, ingest, ledger, principal, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
+from . import config, demo, importers, ingest, ledger, principal, projects, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -989,7 +989,60 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             con.execute("DELETE FROM categories WHERE id=?", (cid,))
         return {"ok": True}
 
-    for entity, col in (("members", "member_id"), ("merchants", "merchant_id"), ("projects", "project_id"), ("ledgers", "ledger_id")):
+    # ------------------------------------------------------------ projects 项目
+    def _prj(fn):
+        try:
+            return fn()
+        except KeyError:
+            raise HTTPException(404, "Project not found")
+        except projects.ProjectError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/projects")
+    def list_projects(include_archived: bool = False, ledger_id: int | None = None, summary: bool = True):
+        if not summary:
+            return db.all("SELECT * FROM projects" + ("" if include_archived else " WHERE COALESCE(archived,0)=0") + " ORDER BY name")
+        return projects.listing(db, include_archived, ledger_id)
+
+    @app.post("/api/projects")
+    def add_project(body: dict = Body(...)):
+        return _prj(lambda: projects.create(db, body))
+
+    @app.post("/api/projects/assign")
+    def assign_project(body: dict = Body(...)):
+        pid = body.get("project_id")
+        return _prj(lambda: projects.assign(db, body.get("ids") or [], int(pid) if pid not in (None, "", 0) else None))
+
+    @app.get("/api/projects/{pid}")
+    def project_detail(pid: int, start: str | None = None, end: str | None = None, ledger_id: int | None = None,
+                       parent_id: int | None = None):
+        return _prj(lambda: projects.detail(db, pid, start, end, ledger_id, parent_id))
+
+    @app.put("/api/projects/{pid}")
+    def upd_project(pid: int, body: dict = Body(...)):
+        return _prj(lambda: projects.update(db, pid, body))
+
+    @app.get("/api/projects/{pid}/plan")
+    def get_plan(pid: int):
+        return _prj(lambda: (projects.get(db, pid), {"project_id": pid, "lines": projects.plan_rows(db, pid)})[1])
+
+    @app.put("/api/projects/{pid}/plan")
+    def put_plan(pid: int, body: dict = Body(...)):
+        return _prj(lambda: projects.set_plan(db, pid, body.get("lines") or [], body.get("replace", True) is not False))
+
+    @app.post("/api/projects/{pid}/plan/copy")
+    def copy_plan(pid: int, body: dict = Body(...)):
+        return _prj(lambda: projects.copy_plan(db, pid, int(body.get("from_project_id") or 0), body.get("scale") or 1))
+
+    @app.post("/api/projects/{pid}/archive")
+    def archive_project(pid: int, body: dict = Body(default={})):
+        return _prj(lambda: projects.update(db, pid, {"archived": 0 if (body or {}).get("undo") else 1}))
+
+    @app.delete("/api/projects/{pid}")
+    def del_project(pid: int):
+        return _prj(lambda: projects.delete(db, pid))
+
+    for entity, col in (("members", "member_id"), ("merchants", "merchant_id"), ("ledgers", "ledger_id")):
         def _make(entity=entity, col=col):
             @app.get(f"/api/{entity}", name=f"list_{entity}")
             def _list():
@@ -1202,14 +1255,15 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
 
     @app.get("/api/reports")
     def reports(start: str | None = None, end: str | None = None, group_by: str = "category", kind: str = "expense",
-                ledger_id: int | None = None):
+                ledger_id: int | None = None, project_id: int | None = None):
         today = date.today()
         start = start or f"{today.year}-01-01"
         end_excl = (end + " 99") if end else f"{today.year + 1}-01-01"
         if group_by not in ("category", "subcategory", "member", "merchant", "project", "account", "tag", "month"):
             raise HTTPException(400, "bad group_by")
-        return {"rows": ledger.breakdown(db, start, end_excl, group_by, kind, ledger_id),
-                "totals": ledger.totals(db, start, end_excl, ledger_id), "start": start, "end": end}
+        return {"rows": ledger.breakdown(db, start, end_excl, group_by, kind, ledger_id, project_id),
+                "totals": ledger.totals(db, start, end_excl, ledger_id, project_id), "start": start, "end": end,
+                "project_id": project_id}
 
     @app.get("/api/networth")
     def networth(months: int = 12):

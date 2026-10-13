@@ -37,7 +37,7 @@ SET.categories = async (el) => {
 };
 SET.lists = async (el) => {
   const ents = [['members', 'Members 成员'], ['merchants', 'Merchants 商家'], ['projects', 'Projects 项目'], ['ledgers', 'Ledgers 账本']];
-  const data = await Promise.all(ents.map(([e]) => api('/api/' + e)));
+  const data = await Promise.all(ents.map(([e]) => api('/api/' + e + (e === 'projects' ? '?summary=false&include_archived=true' : ''))));
   el.innerHTML = `<div class="grid g2">${ents.map(([e, l], i) => `<div class="card"><h3>${l}</h3><div style="max-height:360px;overflow:auto">${data[i].map(x => `<div class="row" style="margin-bottom:5px"><input value="${esc(x.name)}" data-ent="${e}" data-id="${x.id}">${e === 'projects' ? `<label class="chk small"><input type="checkbox" data-arch="${x.id}" ${x.archived ? 'checked' : ''}>archived</label>` : ''}<button class="btn sm danger" data-del="${e}/${x.id}">✕</button></div>`).join('') || '<div class="muted small">None yet</div>'}</div>
     <div class="row" style="margin-top:8px"><input placeholder="Add…" data-new="${e}"><button class="btn sm pri" data-add="${e}">Add</button></div></div>`).join('')}</div>
     <p class="small muted">Merchants are also created automatically from quick-add (<code>at Starbucks</code>), email alerts and imports.</p>`;

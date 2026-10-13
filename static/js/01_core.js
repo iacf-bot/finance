@@ -128,7 +128,7 @@ function typeOptions(selected) { return Object.entries(S.meta.account_types).map
 /* ---------- navigation ---------- */
 const ROUTES = [
   ['home', '🏠', 'Home 首页'], ['dashboard', '📊', 'Dashboard 仪表盘'], ['transactions', '🧾', 'Transactions 流水'], ['accounts', '🏦', 'Accounts 账户'],
-  ['investments', '📈', 'Investments 投资'], ['budgets', '🎯', 'Budgets 预算'], ['scheduled', '🔁', 'Scheduled 定时'], ['reimb', '🧾', 'Reimbursements 报销中心'], ['reminders', '⏰', 'Reminders 提醒中心'], ['reports', '📉', 'Reports 报表'],
+  ['investments', '📈', 'Investments 投资'], ['budgets', '🎯', 'Budgets 预算'], ['scheduled', '🔁', 'Scheduled 定时'], ['reimb', '🧾', 'Reimbursements 报销中心'], ['reminders', '⏰', 'Reminders 提醒中心'], ['projects', '📁', 'Projects 项目'], ['reports', '📉', 'Reports 报表'],
   ['review', '📥', 'Quick add & Review 待确认'], ['settings', '⚙️', 'Settings 设置'],
 ];
 function renderNav() {

@@ -665,3 +665,38 @@ overdue. Items are only included inside their lead window.
 3. **Get Dictionary Value** `count` → **If** `count` *is greater than* 0:
    **Get Dictionary Value** `title` and `message` from the URL contents → **Show Notification** (title, message).
 4. Optional: a second shortcut can call `POST /api/reminders/{id}/done` to tick an item off.
+
+## Projects 项目
+
+Group transactions across categories and accounts: trips, renovations, events.
+
+* **Projects page** (nav 📁): name, description, start/end dates, optional overall budget and currency, icon, color,
+  notes. You can archive or unarchive a project. Archived projects are hidden unless *Show archived* is ticked, and
+  aren't offered in pickers or quick add. Their existing transactions stay assigned. Deleting a project only
+  unassigns its transactions.
+* **Assigning**:
+  - Quick add: `#项目:日本旅行`, `#project:"Kitchen reno"` or `#p:kitchen`. An exact name, a unique prefix or a
+    unique substring matches. An unknown or archived name is reported in the reply. Typing the project name without
+    a tag still works as before.
+  - The detail and edit form's *Project* picker.
+  - *📁 Assign project* for the selected rows on the transaction list.
+  - Filters: transaction list *All projects* filter, and the Reports *project* filter (`/api/reports?project_id=`).
+* **Project detail** (`#/projects/{id}`): expense, income and net, budget left, and reimbursable 可报销 spending shown
+  separately. Totals follow Reports: reimbursable expenses are excluded, reimbursements aren't income, and transfers
+  don't count. It also shows spending by category (donut and table, click to drill into sub-categories), monthly
+  income and expense, by account, person and merchant, a time-range filter and the transaction list (infinite scroll).
+* **Budget plan 预算计划** by category: plan a parent category, a sub-category, or both. A parent rolls up its
+  sub-categories, and a larger explicit parent amount wins. An optional *Other / uncategorized* line takes spending
+  in categories without a plan.
+  - The total is the project's overall budget if set, else the sum of the plan.
+  - The detail page shows planned, actual, remaining and % used per line, with progress bars. Over-budget lines are
+    highlighted, and categories with spending but no plan are listed.
+  - *Copy from* another project, optionally scaled (e.g. ×1.2).
+* **Suishouji import**: the 项目 column maps to projects (created on import).
+* **API**:
+  - `GET/POST /api/projects` (`include_archived`, `summary=false`)
+  - `GET/PUT/DELETE /api/projects/{id}` (detail: `start`, `end`, `parent_id`)
+  - `POST /api/projects/{id}/archive` (`{"undo": true}` unarchives)
+  - `POST /api/projects/assign` `{ids, project_id|null}`
+  - `GET/PUT /api/projects/{id}/plan` `{lines: [{category_id|null, amount, note}]}`
+  - `POST /api/projects/{id}/plan/copy` `{from_project_id, scale}`

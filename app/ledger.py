@@ -809,7 +809,7 @@ def month_summary(db: Database, month: str | None = None, ledger_id: int | None 
 INVEST_TYPES_SQL = "(" + ",".join(f"'{k}'" for k, v in ACCOUNT_TYPES.items() if v[3]) + ")"
 
 
-def _flow_rows(db: Database, start: str, end: str, ledger_id: int | None):
+def _flow_rows(db: Database, start: str, end: str, ledger_id: int | None, project_id: int | None = None):
     """Rows that count as income/expense. Besides expense/income/refund this includes balance adjustments whose reason
     is Unrecorded spending (→ expense), Unrecorded income (→ income) or Fees on a non-investment account (→ expense).
     Their amount is signed so that a balance *decrease* is a positive expense."""
@@ -817,6 +817,8 @@ def _flow_rows(db: Database, start: str, end: str, ledger_id: int | None):
     params: list[Any] = [start, end]
     if ledger_id:
         cond += " AND t.ledger_id=?"; params.append(ledger_id)
+    if project_id:
+        cond += " AND t.project_id=?"; params.append(project_id)
     rows = [r for r in db.all(f"""SELECT t.kind, {REPORT_AMOUNT_SQL} amount, t.currency, t.date, t.category_id, c.parent_id,
         t.member_id, t.merchant_id, t.project_id, t.account_id, t.tags FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
         WHERE {cond} AND t.kind IN ('expense','income','refund')""", params) if not (r["kind"] == "expense" and not r["amount"])]
@@ -862,10 +864,10 @@ def investment_income(db: Database, start: str, end: str, ledger_id: int | None 
     return out
 
 
-def totals(db: Database, start: str, end: str, ledger_id: int | None = None) -> dict:
+def totals(db: Database, start: str, end: str, ledger_id: int | None = None, project_id: int | None = None) -> dict:
     base = db.get_setting("base_currency", "USD"); rates = fx_rates(db)
     inc = exp = 0.0
-    for r in _flow_rows(db, start, end, ledger_id):
+    for r in _flow_rows(db, start, end, ledger_id, project_id):
         v = convert(r["amount"], r["currency"], base, rates)
         if r["kind"] == "income":
             inc += v
@@ -874,15 +876,18 @@ def totals(db: Database, start: str, end: str, ledger_id: int | None = None) -> 
         else:
             exp -= v
     return {"income": round(inc, 2), "expense": round(exp, 2), "net": round(inc - exp, 2), "currency": base,
-            "investment_income": investment_income(db, start, end, ledger_id)["total"]}
+            "investment_income": 0.0 if project_id else investment_income(db, start, end, ledger_id)["total"]}
 
 
 def breakdown(db: Database, start: str, end: str, group_by: str = "category", kind: str = "expense",
-              ledger_id: int | None = None) -> list[dict]:
+              ledger_id: int | None = None, project_id: int | None = None, parent_id: int | None = None) -> list[dict]:
+    """parent_id: only rows in that top-level category (drill-down; use with group_by='subcategory')."""
     base = db.get_setting("base_currency", "USD"); rates = fx_rates(db)
     sums: dict[Any, float] = defaultdict(float)
     counts: dict[Any, int] = defaultdict(int)
-    for r in _flow_rows(db, start, end, ledger_id):
+    for r in _flow_rows(db, start, end, ledger_id, project_id):
+        if parent_id and (r.get("parent_id") or r["category_id"]) != parent_id:
+            continue
         if kind == "expense" and r["kind"] not in ("expense", "refund"):
             continue
         if kind == "income" and r["kind"] != "income":

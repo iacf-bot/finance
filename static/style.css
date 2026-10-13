@@ -231,3 +231,8 @@ table.upcoming td{padding:5px 6px}
 .rc-prev{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}.rc-ph{width:140px;height:180px;border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#f6f8fb;font-size:12px}.rc-ph img{max-width:100%;max-height:100%;object-fit:contain}
 .rc-prog{margin-top:12px}.rc-drop{border:2px dashed #c9d1de;border-radius:12px;padding:26px;text-align:center;color:#5b6475}.rc-drop.on,.qa.drop{border-color:var(--red,#e8553e);background:#fff4f1}
 .rc-strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.rc-thumb img{width:72px;height:96px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}
+/* projects 项目 */
+.prj-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+tr.over-row td{background:rgba(232,85,62,.07)}

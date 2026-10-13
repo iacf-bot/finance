@@ -334,6 +334,18 @@ class Database:
             acols = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
             if "opening_returns" not in acols:
                 con.execute("ALTER TABLE accounts ADD COLUMN opening_returns REAL")
+            # Projects 项目 (additive): extra project fields
+            pcols = {r[1] for r in con.execute("PRAGMA table_info(projects)")}
+            for col, ddl in (("description", "TEXT"), ("start_date", "TEXT"), ("end_date", "TEXT"), ("budget", "REAL"),
+                             ("currency", "TEXT"), ("color", "TEXT"), ("icon", "TEXT"), ("note", "TEXT"),
+                             ("sort", "INTEGER DEFAULT 0"), ("created_at", "TEXT"), ("updated_at", "TEXT")):
+                if col not in pcols:
+                    con.execute(f"ALTER TABLE projects ADD COLUMN {col} {ddl}")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_tx_project ON transactions(project_id)")
+            # per-project budget plan by category (category_id NULL = "Other / uncategorized" line)
+            con.execute("""CREATE TABLE IF NOT EXISTS project_budgets (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL,
+                category_id INTEGER, amount REAL NOT NULL, note TEXT)""")
+            con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_pb ON project_budgets(project_id, COALESCE(category_id, 0))")
             # Reminder Center 提醒中心 (additive): card cycle settings + reminders table
             acols2 = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
             for col, ddl in (("stmt_day", "INTEGER"), ("due_day", "INTEGER"), ("due_after_days", "INTEGER"),

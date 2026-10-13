@@ -48,6 +48,7 @@ class ParseResult:
     merchant: str | None = None
     member_id: int | None = None
     project_id: int | None = None
+    project_unknown: str | None = None  # "#项目:X" naming no (active) project
     tags: list[str] = field(default_factory=list)
     date: str | None = None
     confidence: float = 0.0
@@ -55,6 +56,25 @@ class ParseResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+PROJECT_TAG_RX = re.compile(r'(?<!\S)#(?:项目|project|proj|p):(?:"([^"]+)"|([^\s#]+))', re.I)
+
+
+def match_project(projects: list[dict], name: str) -> dict | None:
+    """Active project by exact name, else a unique prefix, else a unique substring (case-insensitive; a leading
+    "[DEMO]" is ignored). Ambiguous or unknown -> None."""
+    n = (name or "").strip().lower()
+    if not n:
+        return None
+    act = [(re.sub(r"^\[demo\]\s*", "", p["name"].lower()), p) for p in projects if not p.get("archived")]
+    for ok in (lambda k, p: n in (k, p["name"].lower()), lambda k, p: k.startswith(n), lambda k, p: n in k):
+        hits = [p for k, p in act if ok(k, p)]
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
+            return None  # ambiguous
+    return None
 
 
 def normalize(text: str) -> str:
@@ -234,6 +254,18 @@ def parse_quick_add(text: str, ctx: dict) -> ParseResult:
     t = normalize(text)
     res = ParseResult(text=t)
 
+    # project: "#项目:Name" / "#project:Name" / "#p:Name" (quotes allow spaces: #p:"Japan trip")
+    pm = PROJECT_TAG_RX.search(t)
+    if pm:
+        want = (pm.group(1) or pm.group(2) or "").strip()
+        t = (t[:pm.start()] + t[pm.end():]).strip()
+        res.text = t
+        hit = match_project(ctx.get("projects") or [], want)
+        if hit:
+            res.project_id = hit["id"]
+            res.reasons.append(f"project #{hit['name']}")
+        else:
+            res.project_unknown = want
     # tags: #word
     for m in re.finditer(r"#([\w\u3400-\u9fff-]+)", t):
         res.tags.append(m.group(1))
@@ -339,9 +371,10 @@ def parse_quick_add(text: str, ctx: dict) -> ParseResult:
         for nm in re.split(r"\s+", re.sub(r"\[[^\]]*\]", " ", mem["name"])):
             if len(nm) >= 2 and nm.lower() not in ("me", "household") and _term_regex(nm).search(t.lower()):
                 res.member_id = mem["id"]
-    for p in ctx.get("projects") or []:
-        if not p.get("archived") and len(p["name"]) >= 2 and _term_regex(p["name"]).search(t.lower()):
-            res.project_id = p["id"]
+    if res.project_id is None and not pm:
+        for p in ctx.get("projects") or []:
+            if not p.get("archived") and len(p["name"]) >= 2 and _term_regex(p["name"]).search(t.lower()):
+                res.project_id = p["id"]
 
     if res.amount is None:
         res.confidence = min(res.confidence, 0.3)
