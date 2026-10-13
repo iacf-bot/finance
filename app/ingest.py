@@ -332,7 +332,7 @@ def prefill_from_parse(db: Database, res, text: str) -> dict:
     prefill = {"kind": res.kind, "amount": res.amount,
                "currency": res.currency or (acct["currency"] if acct else None) or db.get_setting("base_currency", "USD"),
                "account_id": res.account_id, "to_account_id": res.to_account_id, "category_id": res.category_id,
-               "merchant": res.merchant, "member_id": res.member_id, "project_id": res.project_id,
+               "merchant": res.merchant, "member_id": res.member_id, "project_id": res.project_id, "plan_line_id": res.plan_line_id,
                "tags": ",".join(res.tags), "date": res.date, "note": (text or "").strip(), "raw_text": text}
     return {"prefill": prefill, "uncertain": unsure}
 
@@ -389,7 +389,7 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
         return out
     data = {"kind": res.kind, "date": res.date, "amount": res.amount or 0, "currency": res.currency,
             "account_id": res.account_id, "to_account_id": res.to_account_id, "category_id": res.category_id,
-            "merchant": res.merchant, "member_id": res.member_id, "project_id": res.project_id, "tags": res.tags,
+            "merchant": res.merchant, "member_id": res.member_id, "project_id": res.project_id, "plan_line_id": res.plan_line_id, "tags": res.tags,
             "note": text.strip(), "source": source, "status": status, "confidence": res.confidence,
             "raw_text": text, "ledger_id": ledger_id or int(db.get_setting("default_ledger_id", "1") or 1),
             "external_id": external_id}
@@ -408,6 +408,11 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
 
 
 def _project_note(msg: str, res) -> str:
+    if getattr(res, "plan_line_unknown", None):
+        if msg_zh():
+            msg += f" · 未找到预算明细“{res.plan_line_unknown}”"
+        else:
+            msg += f" · plan line “{res.plan_line_unknown}” not found"
     if getattr(res, "project_unknown", None):
         if msg_zh():
             return msg + f" · 未找到项目“{res.project_unknown}”（或已归档）"

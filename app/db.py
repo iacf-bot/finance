@@ -346,6 +346,41 @@ class Database:
             con.execute("""CREATE TABLE IF NOT EXISTS project_budgets (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL,
                 category_id INTEGER, amount REAL NOT NULL, note TEXT)""")
             con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_pb ON project_budgets(project_id, COALESCE(category_id, 0))")
+            # project plan lines (additive): free-named lines, each optionally mapped to categories; transactions can be
+            # assigned to a line explicitly (transactions.plan_line_id). catch_all = absorbs project spending no other
+            # line matches (the old "Other / uncategorized" category-plan line).
+            con.execute("""CREATE TABLE IF NOT EXISTS project_plan_lines (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL,
+                name TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, currency TEXT, note TEXT, sort INTEGER DEFAULT 0,
+                catch_all INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT)""")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_ppl_project ON project_plan_lines(project_id, sort)")
+            con.execute("""CREATE TABLE IF NOT EXISTS project_plan_line_cats (line_id INTEGER NOT NULL, category_id INTEGER NOT NULL,
+                PRIMARY KEY (line_id, category_id))""")
+            if "plan_line_id" not in {r[1] for r in con.execute("PRAGMA table_info(transactions)")}:
+                con.execute("ALTER TABLE transactions ADD COLUMN plan_line_id INTEGER")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_tx_plan_line ON transactions(plan_line_id)")
+            # one-time: copy each category plan (project_budgets, left untouched) into lines, one per category
+            if not con.execute("SELECT 1 FROM settings WHERE key='migr_plan_lines'").fetchone():
+                cats = {r[0]: (r[1], r[2]) for r in con.execute("SELECT id, name, parent_id FROM categories")}
+                stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                for pid, in con.execute("SELECT DISTINCT project_id FROM project_budgets").fetchall():
+                    if con.execute("SELECT 1 FROM project_plan_lines WHERE project_id=?", (pid,)).fetchone():
+                        continue
+                    rows = con.execute("SELECT category_id, amount, note FROM project_budgets WHERE project_id=? "
+                                       "ORDER BY category_id IS NULL, amount DESC", (pid,)).fetchall()
+                    for i, (cid, amt, note) in enumerate(rows):
+                        if cid is not None and cid not in cats:
+                            continue
+                        if cid is None:
+                            name = "Other"
+                        else:
+                            nm, par = cats[cid]
+                            name = (cats[par][0] + " › " + nm) if par in cats else nm
+                        cur = con.execute("INSERT INTO project_plan_lines(project_id, name, amount, note, sort, catch_all, "
+                                          "created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                                          (pid, name, amt, note, (i + 1) * 10, 1 if cid is None else 0, stamp, stamp))
+                        if cid is not None:
+                            con.execute("INSERT INTO project_plan_line_cats(line_id, category_id) VALUES(?,?)", (cur.lastrowid, cid))
+                con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('migr_plan_lines', '1')")
             # Reminder Center 提醒中心 (additive): card cycle settings + reminders table
             acols2 = {r[1] for r in con.execute("PRAGMA table_info(accounts)")}
             for col, ddl in (("stmt_day", "INTEGER"), ("due_day", "INTEGER"), ("due_after_days", "INTEGER"),

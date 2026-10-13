@@ -69,10 +69,10 @@ VIEWS.projects = async (v, rest = []) => {
 async function projectDetail(v, id) {
   const rg = S.prjRange = S.prjRange && S.prjRange.id === id ? S.prjRange : {id, start: '', end: '', parent_id: ''};
   const d = await api(`/api/projects/${id}?` + prjQS({start: rg.start, end: rg.end, ledger_id: S.ledger || '', parent_id: rg.parent_id}));
-  const p = d.project, s = d.summary, cur = s.currency, pl = d.plan;
+  const p = d.project, s = d.summary, cur = s.currency;
   const tbl = (rows, title) => `<div class="card"><h3>${title}</h3><table class="t"><tbody>${rows.length ? rows.map(r => `<tr><td>${esc(r.name)}</td><td class="right">${money(r.amount, cur)}</td><td class="right small muted">${r.pct}%</td></tr>`).join('') : '<tr><td class="muted">—</td></tr>'}</tbody></table></div>`;
   v.innerHTML = `<div class="page-h"><h2><a href="#/projects" class="btn sm">‹ Projects</a> ${prjBadge(p)}${esc(p.name)}${p.archived ? ' <span class="pill">archived</span>' : ''}</h2>
-     <div class="row"><button class="btn" id="pdEdit">✎ Edit</button><button class="btn" id="pdPlan">🎯 Budget plan</button></div></div>
+     <div class="row"><button class="btn" id="pdEdit">✎ Edit</button></div></div>
    ${p.description ? `<div class="muted" style="margin-bottom:6px">${esc(p.description)}</div>` : ''}
    <form class="row" id="pdRange" style="gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center"><span class="small">Range:</span><input type="date" name="start" value="${esc(rg.start)}" style="width:auto"><span>→</span><input type="date" name="end" value="${esc(rg.end)}" style="width:auto">
      <button class="btn sm">Apply</button>${p.start_date ? '<button type="button" class="btn sm" id="pdProj">Project dates</button>' : ''}<button type="button" class="btn sm" id="pdAll">All time</button></form>
@@ -83,14 +83,7 @@ async function projectDetail(v, id) {
      <div class="card stat"><div class="lbl">Budget</div>${s.budget != null ? `<div class="val ${s.budget_remaining < 0 ? 'neg' : ''}">${money(s.budget_remaining, cur)} <span class="small muted">left</span></div>${prjBar(s.budget_pct, s.budget_remaining < 0)}<div class="small muted">${s.budget_pct}% of ${money(s.budget, cur)}</div>` : '<div class="val muted">—</div>'}</div>
      ${s.reimbursable.count ? `<div class="card stat"><div class="lbl">Reimbursable (not in expense)</div><div class="val">${money(s.reimbursable.amount, cur)}</div><div class="small muted">outstanding ${money(s.reimbursable.outstanding, cur)}</div></div>` : ''}
    </div>
-   ${pl ? `<div class="card"><h3>Plan vs actual 预算 vs 实际 <span class="small muted">(${pl.budget_source === 'explicit' ? 'overall budget set on the project' : 'total = sum of plan'})</span></h3>
-     <table class="t"><thead><tr><th>Category</th><th class="right">Planned</th><th class="right">Actual</th><th class="right">Remaining</th><th style="width:180px">Used</th></tr></thead><tbody>
-     ${pl.rows.map(r => `<tr class="${r.over ? 'over-row' : ''}"><td style="padding-left:${r.level ? 22 : 6}px">${r.level ? '' : '<b>'}${esc(r.name)}${r.level ? '' : '</b>'}${r.rollup ? ' <span class="small muted">(sum of sub-categories)</span>' : ''}${r.note ? `<div class="small muted">${esc(r.note)}</div>` : ''}</td>
-       <td class="right">${r.unplanned ? '<span class="muted">—</span>' : money(r.planned, cur)}</td><td class="right">${money(r.actual, cur)}</td>
-       <td class="right ${r.remaining < 0 ? 'neg' : ''}">${r.unplanned ? '' : money(r.remaining, cur)}</td><td>${r.pct != null ? `${prjBar(r.pct, r.over)}<span class="small ${r.over ? 'neg' : 'muted'}">${r.pct}%${r.over ? ' over 超支' : ''}</span>` : ''}</td></tr>`).join('')}
-     <tr><td><b>Total</b></td><td class="right"><b>${money(pl.budget, cur)}</b></td><td class="right"><b>${money(pl.actual, cur)}</b></td><td class="right ${pl.remaining < 0 ? 'neg' : ''}"><b>${money(pl.remaining, cur)}</b></td><td>${prjBar(pl.pct, pl.over)}<span class="small ${pl.over ? 'neg' : 'muted'}">${pl.pct ?? ''}%</span></td></tr></tbody></table>
-     ${pl.unplanned.length ? `<div class="small" style="margin-top:6px"><b>Spending without a plan:</b> ${pl.unplanned.map(u => `${esc(u.name)} ${money(u.actual, cur)}`).join(' · ')} <span class="muted">(${pl.rows.some(r => r.other) ? 'counted in Other' : 'add an Other line or plan these categories'})</span></div>` : ''}</div>`
-     : `<div class="card small muted">No budget plan yet. <button class="btn sm" id="pdPlan2">🎯 Plan by category</button></div>`}
+   <div id="pdPlanCard"></div>
    <div class="grid2">
      <div class="card"><h3>Spending by category ${d.drill ? `<button class="btn sm" id="pdUp">‹ all categories</button>` : '<span class="small muted">(click to drill down)</span>'}</h3><div style="height:240px"><canvas id="pdCat"></canvas></div>
        <table class="t"><tbody>${(d.drill ? d.drill.rows : d.by_category).map(r => `<tr ${d.drill ? '' : `data-drill="${r.key ?? ''}" style="cursor:pointer"`}><td>${esc(r.name)}</td><td class="right">${money(r.amount, cur)}</td><td class="right small muted">${r.pct}%</td></tr>`).join('') || '<tr><td class="muted">—</td></tr>'}</tbody></table></div>
@@ -107,7 +100,7 @@ async function projectDetail(v, id) {
   $('#pdAll').onclick = () => { rg.start = rg.end = ''; route(); };
   if ($('#pdProj')) $('#pdProj').onclick = () => { rg.start = p.start_date || ''; rg.end = p.end_date || ''; route(); };
   $('#pdEdit').onclick = () => projectForm(p);
-  [$('#pdPlan'), $('#pdPlan2')].filter(Boolean).forEach(b => b.onclick = () => planEditor(p));
+  planCard($('#pdPlanCard', v), p, d.plan_lines, cur, rg);
   const base = [['project_id', id], ...(rg.start ? [['start', rg.start]] : []), ...(rg.end ? [['end', rg.end]] : []), ...(S.ledger ? [['ledger_id', S.ledger]] : [])];
   $('#pdTx').innerHTML = txTable([], {tbodyId: 'pdBody'});
   infiniteList($('#pdTx'), {
@@ -116,26 +109,119 @@ async function projectDetail(v, id) {
   });
 }
 
-async function planEditor(p) {
-  const [cur, all] = await Promise.all([api(`/api/projects/${p.id}/plan`), api('/api/projects?include_archived=true&summary=false')]);
-  const have = Object.fromEntries(cur.lines.map(l => [l.category_id ?? 'other', l]));
-  const exp = (S.meta.categories || []).filter(c => c.kind === 'expense');
-  const inp = (key, label, lvl) => `<tr><td style="padding-left:${lvl ? 22 : 6}px">${lvl ? '' : '<b>'}${esc(label)}${lvl ? '' : '</b>'}</td><td style="width:140px"><input type="number" step="0.01" min="0" data-pl="${key}" value="${have[key] ? have[key].amount : ''}" style="text-align:right"></td></tr>`;
-  const bg = modal(`Budget plan · ${esc(p.name)} (${esc(p.currency || S.meta.settings.base_currency)})`, `
-    <div class="row" style="gap:6px;margin-bottom:6px"><span class="small">Copy from</span><select id="plFrom"><option value="">—</option>${all.filter(x => x.id !== p.id).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
-      <span class="small">×</span><input id="plScale" type="number" step="0.1" value="1" style="width:70px"><button class="btn sm" id="plCopy">Copy</button></div>
-    <div class="small muted">Plan a parent category, its sub-categories, or both (parents roll up their sub-categories). Leave blank for no plan.</div>
-    <div style="max-height:55vh;overflow:auto"><table class="t"><tbody>${exp.map(c => inp(c.id, c.label || c.name, 0) + (c.children || []).map(ch => inp(ch.id, ch.name + ' ' + (ch.name_zh || ''), 1)).join('')).join('')}
-      ${inp('other', 'Other / uncategorized', 0)}</tbody></table></div>
-    <div class="right"><b>Total: <span id="plTot"></span></b></div>`,
-    {wide: true, buttons: '<button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok>Save plan</button>'});
-  const tot = () => { $('#plTot', bg).textContent = money($$('[data-pl]', bg).reduce((a, i) => a + (+i.value || 0), 0), p.currency || S.meta.settings.base_currency); };
-  $$('[data-pl]', bg).forEach(i => i.oninput = tot); tot();
-  $('[data-x2]', bg).onclick = bg.close;
-  $('#plCopy', bg).onclick = async () => { const f = $('#plFrom', bg).value; if (!f) return toast('Choose a project', true);
-    await guard(() => api(`/api/projects/${p.id}/plan/copy`, {method: 'POST', body: {from_project_id: +f, scale: +$('#plScale', bg).value || 1}})); bg.close(); toast('Plan copied'); route(); };
+/* ---- plan lines 预算明细: plan vs actual per line, expand to transactions, inline add/edit/reorder, templates, copy */
+const expCats = () => (S.meta.categories || []).filter(c => c.kind === 'expense');
+const catPick = c => (I18N.lang.startsWith('zh') && c.name_zh) ? c.name_zh : c.name;  // category names in the UI language
+const catName = id => { if (id == null) return t('Uncategorized'); for (const c of expCats()) { if (c.id === id) return catPick(c); for (const k of c.children || []) if (k.id === id) return catPick(c) + ' › ' + catPick(k); } return '#' + id; };
+function catMultiOptions(sel = []) {
+  return expCats().map(c => `<option value="${c.id}" ${sel.includes(c.id) ? 'selected' : ''}>${esc(c.label || c.name)}</option>` +
+    (c.children || []).map(k => `<option value="${k.id}" ${sel.includes(k.id) ? 'selected' : ''}>\u00a0\u00a0\u00a0${esc(k.label || k.name)}</option>`).join('')).join('');
+}
+function curOptions(sel, projCur) {
+  const base = S.meta.settings.base_currency, all = [...new Set([projCur || base, base, ...(S.meta.currencies || []).map(c => c.currency || c.code || c)])];
+  return all.map(c => `<option ${c === (sel || projCur || base) ? 'selected' : ''}>${esc(c)}</option>`).join('');
+}
+
+function planCard(el, p, pl, cur, rg) {
+  const pcur = p.currency || S.meta.settings.base_currency;
+  const head = `<h3>Budget plan <span class="small muted">${pl ? (pl.budget_source === 'explicit' ? '(overall budget set on the project)' : '(total = sum of lines)') : ''}</span>
+    <span class="sp"></span><button class="btn sm" id="plAdd">+ Plan line</button> <button class="btn sm" id="plTpl">📋 Template</button> <button class="btn sm" id="plCopy">⧉ Copy plan</button></h3>`;
+  if (!pl) {
+    el.innerHTML = `<div class="card">${head}<div class="small muted">No budget plan yet. Add lines such as Flights, Hotel and Meals, start from a template, or copy another project's plan. Each line can be matched by categories and/or by assigning transactions to it.</div><table class="t"><tbody id="plBody"></tbody></table></div>`;
+  } else {
+    const row = (l, i, n) => `<tr class="pl-row ${l.over ? 'over-row' : ''}" data-l="${l.id}" style="cursor:pointer">
+      <td class="nowrap" onclick="event.stopPropagation()"><button class="btn sm" data-up="${l.id}" ${i ? '' : 'disabled'} title="Move up">↑</button><button class="btn sm" data-dn="${l.id}" ${i < n - 1 ? '' : 'disabled'} title="Move down">↓</button></td>
+      <td><span class="pl-caret">▸</span> <b data-notr>${esc(l.name)}</b>${l.catch_all ? ' <span class="pill">catches the rest</span>' : ''}
+        ${l.category_ids.length ? `<div class="small muted" data-notr>${l.category_ids.map(c => esc(catName(c))).join(', ')}</div>` : ''}${l.note ? `<div class="small muted" data-notr>${esc(l.note)}</div>` : ''}</td>
+      <td class="right">${money(l.amount, l.currency)}${l.currency !== cur ? `<div class="small muted">≈ ${money(l.planned_base, cur)}</div>` : ''}</td>
+      <td class="right">${money(l.actual, cur)}<div class="small muted">${l.count} txns</div></td>
+      <td class="right ${l.remaining < 0 ? 'neg' : ''}">${money(l.remaining, cur)}</td>
+      <td>${l.pct != null ? `${prjBar(l.pct, l.over)}<span class="small ${l.over ? 'neg' : 'muted'}">${l.pct}%${l.over ? ' · over' : ''}</span>` : '<span class="small muted">—</span>'}</td>
+      <td class="right nowrap" onclick="event.stopPropagation()"><button class="btn sm" data-ed="${l.id}" title="Edit">✎</button><button class="btn sm danger" data-rm="${l.id}" title="Delete">🗑</button></td></tr>`;
+    const un = pl.unplanned;
+    el.innerHTML = `<div class="card">${head}<table class="t pl-table"><thead><tr><th style="width:64px"></th><th>Plan line</th><th class="right">Planned</th><th class="right">Actual</th><th class="right">Left</th><th style="width:170px">Used</th><th></th></tr></thead><tbody id="plBody">
+      ${pl.lines.map((l, i) => row(l, i, pl.lines.length)).join('')}
+      ${un.actual || un.count ? `<tr class="pl-row" data-l="unplanned" style="cursor:pointer"><td></td><td><span class="pl-caret">▸</span> <i>Unplanned</i><div class="small muted">${un.by_category.map(u => `<span data-notr>${esc(catName(u.category_id))}</span> ${money(u.actual, cur)}`).join(' · ')}</div></td><td class="right muted">—</td><td class="right">${money(un.actual, cur)}<div class="small muted">${un.count} txns</div></td><td></td><td></td><td></td></tr>` : ''}
+      <tr><td></td><td><b>Total</b></td><td class="right"><b>${money(pl.budget, cur)}</b>${pl.budget_source === 'explicit' ? `<div class="small muted">lines ${money(pl.plan_total, cur)}</div>` : ''}</td><td class="right"><b>${money(pl.actual, cur)}</b></td>
+        <td class="right ${pl.remaining < 0 ? 'neg' : ''}"><b>${money(pl.remaining, cur)}</b></td><td>${pl.pct != null ? `${prjBar(pl.pct, pl.over)}<span class="small ${pl.over ? 'neg' : 'muted'}">${pl.pct}%</span>` : ''}</td><td></td></tr></tbody></table>
+      <div class="small muted">Click a line to see its transactions. A transaction assigned to a line counts there; otherwise it goes to the first line mapped to its category, then to a “catches the rest” line, else Unplanned. Quick add: <code>#p:Project/Line</code>.</div></div>`;
+  }
+  const reload = () => route();
+  $('#plAdd', el).onclick = () => planLineEditor(el, p, pcur, null, reload);
+  $('#plTpl', el).onclick = () => planTemplateDialog(p, !!pl, reload);
+  $('#plCopy', el).onclick = () => planCopyDialog(p, !!pl, reload);
+  if (!pl) return;
+  const ids = pl.lines.map(l => l.id);
+  const move = async (id, d) => { const i = ids.indexOf(id), j = i + d; [ids[i], ids[j]] = [ids[j], ids[i]];
+    await guard(() => api(`/api/projects/${p.id}/plan-lines/reorder`, {method: 'POST', body: {ids}})); reload(); };
+  $$('[data-up]', el).forEach(b => b.onclick = () => move(+b.dataset.up, -1));
+  $$('[data-dn]', el).forEach(b => b.onclick = () => move(+b.dataset.dn, 1));
+  $$('[data-ed]', el).forEach(b => b.onclick = () => planLineEditor(el, p, pcur, pl.lines.find(l => l.id === +b.dataset.ed), reload));
+  $$('[data-rm]', el).forEach(b => b.onclick = async () => {
+    const l = pl.lines.find(x => x.id === +b.dataset.rm);
+    if (!await confirmBox(`Delete plan line “${l.name}”? Transactions assigned to it are kept (they fall back to category matching).`)) return;
+    await guard(() => api(`/api/projects/${p.id}/plan-lines/${l.id}`, {method: 'DELETE'})); await loadMeta(); reload();
+  });
+  $$('tr.pl-row', el).forEach(tr => tr.onclick = async () => {
+    const nx = tr.nextElementSibling;
+    if (nx && nx.classList.contains('pl-tx')) { nx.remove(); $('.pl-caret', tr).textContent = '▸'; return; }
+    $('.pl-caret', tr).textContent = '▾';
+    const r = await guard(() => api(`/api/projects/${p.id}/plan-lines/${tr.dataset.l}/transactions?` + prjQS({start: rg.start, end: rg.end, ledger_id: S.ledger || ''})));
+    tr.insertAdjacentHTML('afterend', `<tr class="pl-tx"><td></td><td colspan="6">${r.transactions.length ? txTable(r.transactions, {tbodyId: 'plTx' + tr.dataset.l}) : '<div class="small muted">No transactions yet.</div>'}</td></tr>`);
+    const box = tr.nextElementSibling; if (r.transactions.length) bindTxRows(box, () => reload());
+  });
+}
+
+function planLineEditor(el, p, pcur, l, after) {
+  l = l || {name: '', amount: '', currency: pcur, note: '', category_ids: [], catch_all: false};
+  const bg = modal(l.id ? 'Edit plan line' : 'New plan line', `<form class="form" id="plF" autocomplete="off">
+    <label class="f"><span>Name</span><input name="name" value="${esc(l.name)}" placeholder="Flights" required maxlength="80"></label>
+    <label class="f"><span>Planned amount</span><span class="row"><input name="amount" type="number" step="0.01" min="0" value="${l.amount ?? ''}" style="flex:1"><select name="currency" style="width:90px">${curOptions(l.currency, pcur)}</select></span></label>
+    <label class="f full"><span>Matched categories (optional; Ctrl/⌘-click for several)</span><select name="category_ids" multiple size="8">${catMultiOptions(l.category_ids)}</select></label>
+    <label class="f full"><span>Notes</span><input name="note" value="${esc(l.note || '')}"></label>
+    <label class="f full"><span><input type="checkbox" name="catch_all" ${l.catch_all ? 'checked' : ''}> Catches the rest: project spending no other line matches counts here</span></label></form>`,
+    {wide: true, buttons: '<button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok>Save</button>'});
+  const f = $('#plF', bg); $('[data-x2]', bg).onclick = bg.close; f.name.focus();
   $('[data-ok]', bg).onclick = async () => {
-    const lines = $$('[data-pl]', bg).filter(i => i.value !== '').map(i => ({category_id: i.dataset.pl === 'other' ? null : +i.dataset.pl, amount: +i.value}));
-    await guard(() => api(`/api/projects/${p.id}/plan`, {method: 'PUT', body: {lines}})); bg.close(); toast('Plan saved'); route();
+    const body = {name: f.name.value, amount: f.amount.value === '' ? 0 : +f.amount.value, currency: f.currency.value, note: f.note.value,
+      catch_all: f.catch_all.checked, category_ids: [...f.category_ids.selectedOptions].map(o => +o.value)};
+    await guard(() => api(`/api/projects/${p.id}/plan-lines` + (l.id ? '/' + l.id : ''), {method: l.id ? 'PUT' : 'POST', body}));
+    bg.close(); toast('Saved'); await loadMeta(); after();
+  };
+}
+
+const tplName = n => { const k = 'plan template: ' + n, v = t(k); return v === k ? n : v; };  // template names in the UI language
+async function planTemplateDialog(p, hasPlan, after) {
+  const {templates} = await api('/api/plan-templates');
+  const pcur = p.currency || S.meta.settings.base_currency;
+  const bg = modal('Plan from a template', `<div class="row" style="gap:6px;margin-bottom:8px"><select id="tpSel" data-notr>${templates.map(t => `<option value="${t.key}">${esc(tplName(t.name))}</option>`).join('')}</select>
+      ${hasPlan ? '<label class="small"><input type="checkbox" id="tpRep"> Replace the current lines</label>' : ''}</div>
+    <div class="small muted">Suggested category matches come from your own categories (by name). Adjust amounts now and edit the lines afterwards.</div>
+    <div style="max-height:55vh;overflow:auto"><table class="t"><thead><tr><th>Plan line</th><th>Matched categories</th><th class="right">Planned (${esc(pcur)})</th></tr></thead><tbody id="tpBody"></tbody></table></div>`,
+    {wide: true, buttons: '<button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok>Add lines</button>'});
+  const show = () => { const t = templates.find(x => x.key === $('#tpSel', bg).value);
+    $('#tpBody', bg).innerHTML = t.lines.map(l => `<tr><td><b data-notr>${esc(tplName(l.name))}</b></td><td class="small muted">${l.catch_all ? 'catches the rest' : l.category_ids.length ? `<span data-notr>${l.category_ids.map(c => esc(catName(c))).join(', ')}</span>` : '—'}</td>
+      <td class="right"><input type="number" step="0.01" min="0" data-amt="${esc(l.name)}" style="width:110px;text-align:right"></td></tr>`).join(''); };
+  $('#tpSel', bg).onchange = show; show();
+  $('[data-x2]', bg).onclick = bg.close;
+  $('[data-ok]', bg).onclick = async () => {
+    const amounts = Object.fromEntries($$('[data-amt]', bg).filter(i => i.value !== '').map(i => [i.dataset.amt, +i.value]));
+    const names = Object.fromEntries($$('[data-amt]', bg).map(i => [i.dataset.amt, tplName(i.dataset.amt)]));
+    await guard(() => api(`/api/projects/${p.id}/plan-lines/template`, {method: 'POST', body: {template: $('#tpSel', bg).value, amounts, names, replace: !!($('#tpRep', bg) || {}).checked}}));
+    bg.close(); toast('Plan lines added'); await loadMeta(); after();
+  };
+}
+
+async function planCopyDialog(p, hasPlan, after) {
+  const all = (await api('/api/projects?include_archived=true&summary=false')).filter(x => x.id !== p.id);
+  const bg = modal('Copy plan from another project', `<form class="form" id="cpF"><label class="f full"><span>Project</span><select name="from">${all.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label>
+    <label class="f"><span>Scale amounts ×</span><input name="scale" type="number" step="0.1" value="1"></label>
+    ${hasPlan ? '<label class="f"><span><input type="checkbox" name="replace" checked> Replace the current lines</span></label>' : ''}</form>`,
+    {buttons: '<button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok>Copy</button>'});
+  const f = $('#cpF', bg); $('[data-x2]', bg).onclick = bg.close;
+  $('[data-ok]', bg).onclick = async () => {
+    if (!f.from.value) return toast('Choose a project', true);
+    await guard(() => api(`/api/projects/${p.id}/plan-lines/copy`, {method: 'POST', body: {from_project_id: +f.from.value, scale: +f.scale.value || 1, replace: f.replace ? f.replace.checked : false}}));
+    bg.close(); toast('Plan copied'); await loadMeta(); after();
   };
 }

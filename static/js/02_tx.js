@@ -184,6 +184,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
     <label class="f${U('merchant')}" data-show="expense income refund"><span>Merchant / payee</span><input name="merchant" list="dlMerch" value="${esc(t.merchant_name || t.merchant || '')}"></label>
     <label class="f${U('member_id')}" data-show="expense income refund transfer"><span>Member</span><select name="member_id">${listOptions(m.members, t.member_id, '—')}</select></label>
     <label class="f" data-show="expense income refund transfer"><span>Project</span><select name="project_id">${listOptions(m.projects.filter(p => !p.archived || p.id == t.project_id), t.project_id, '—')}</select></label>
+    <label class="f" data-show="expense income refund transfer" id="txPlanLine" hidden><span>Plan line</span><select name="plan_line_id"></select></label>
     <label class="f"><span>Ledger</span><select name="ledger_id">${m.ledgers.map(l => `<option value="${l.id}" ${l.id == t.ledger_id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></label>
     <label class="f"><span>Tags (comma separated)</span><input name="tags" value="${esc(Array.isArray(t.tags) ? t.tags.join(',') : (t.tags || ''))}"></label>
     <label class="f full"><span>Note</span><textarea name="note" style="min-height:54px">${esc(t.note || '')}</textarea></label>
@@ -199,6 +200,15 @@ async function openTx(id, after, preset = {}, opts = {}) {
   const tButtons = id && !isReview ? buttons.replace('<button class="btn" data-cancel>', '<button class="btn" data-recur title="Create a schedule from this transaction">🔁 Make recurring</button><button class="btn" data-cancel>') : buttons;
   const bg = modal(SCH ? (SCH.id ? 'Edit schedule' : 'New schedule') : id ? (isReview ? 'Review item' : 'Edit transaction') : 'New transaction', html, {buttons: sButtons || tButtons, wide: false});
   const form = $('#txForm', bg);
+  // plan line 预算明细: options follow the chosen project (blank = matched by category)
+  const syncPlanLines = (keep) => {
+    const pid = +form.project_id.value || null, ls = (S.meta.plan_lines || []).filter(l => l.project_id === pid);
+    const want = keep !== undefined ? keep : form.plan_line_id.value;
+    form.plan_line_id.innerHTML = '<option value="">— by category —</option>' + ls.map(l => `<option value="${l.id}" ${l.id == want ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
+    $('#txPlanLine', bg).hidden = !ls.length;
+  };
+  syncPlanLines(t.plan_line_id || '');
+  form.project_id.addEventListener('change', () => syncPlanLines(''));
   let kind = t.kind;
   const dirty = new Set(Object.keys(preset).filter(k => preset[k] !== null && preset[k] !== undefined && preset[k] !== ''));
   if (dirty.has('account_id')) dirty.add('from_account_id');
@@ -276,7 +286,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
   });
   const collect = () => {
     const fd = new FormData(form); const o = {kind};
-    for (const k of ['amount', 'currency', 'category_id', 'ticker', 'shares', 'price', 'fee', 'merchant', 'member_id', 'project_id', 'ledger_id', 'tags', 'note', 'to_amount']) o[k] = fd.get(k);
+    for (const k of ['amount', 'currency', 'category_id', 'ticker', 'shares', 'price', 'fee', 'merchant', 'member_id', 'project_id', 'plan_line_id', 'ledger_id', 'tags', 'note', 'to_amount']) o[k] = fd.get(k);
     o.date = (fd.get('date') || '').replace('T', ' ');
     o.account_id = kind === 'transfer' ? fd.get('from_account_id') : fd.get('account_id');
     o.to_account_id = kind === 'transfer' ? fd.get('to_account_id') : null;
@@ -345,6 +355,6 @@ async function openQuickForm(text) {
   if (r.action === 'set_balance' || r.action === 'reconcile') { toast('Balance commands are applied with Add (or Accounts → Set balance)', true); return; }
   const p = r.prefill || {};
   const preset = {};
-  for (const k of ['kind', 'amount', 'currency', 'account_id', 'to_account_id', 'category_id', 'merchant', 'member_id', 'project_id', 'tags', 'date', 'note', 'reimbursable', 'reimb_payer']) if (p[k] !== null && p[k] !== undefined && p[k] !== '') preset[k] = p[k];
+  for (const k of ['kind', 'amount', 'currency', 'account_id', 'to_account_id', 'category_id', 'merchant', 'member_id', 'project_id', 'plan_line_id', 'tags', 'date', 'note', 'reimbursable', 'reimb_payer']) if (p[k] !== null && p[k] !== undefined && p[k] !== '') preset[k] = p[k];
   return openTx(null, null, preset, {uncertain: r.uncertain || [], raw_text: text, banner: `Pre-filled from “${esc(text)}” (confidence ${Math.round((r.confidence || 0) * 100)}%). Nothing is saved until you press Save.`});
 }

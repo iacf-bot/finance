@@ -30,7 +30,7 @@ async function renderPR() {
   el.innerHTML = `<h3>Principal &amp; returns<span class="sp"></span>
       <span class="chips" role="group" aria-label="Period">${PERIODS.map(([k, l]) => `<button type="button" class="chip${st.period === k ? ' on' : ''}" data-pp="${k}">${l}</button>`).join('')}</span>
       <span id="prCustom"${st.period === 'CUSTOM' ? '' : ' hidden'}><input type="date" id="prS" value="${esc(st.start)}"> – <input type="date" id="prE" value="${esc(st.end)}"></span></h3>
-    <div class="small muted" style="margin:-4px 0 10px">${esc(d.from)} → ${esc(d.to)} · figures as of ${esc(d.to)} · value = principal + returns + unexplained · return % = returns ÷ principal · same logic as the account pages</div>
+    <div class="small muted" style="margin:-4px 0 10px">${esc(d.from)} → ${esc(d.to)} · <span>figures as of</span> ${esc(d.to)} · <span>value = principal + returns + unexplained</span> · <span>return % = returns ÷ principal</span> · <span>same logic as the account pages</span></div>
     ${!d.accounts.length ? '<div class="empty">No investment-type accounts yet (Brokerage / Retirement / Crypto).</div>' : `
     <div class="grid g4 inv-cards">
       <div class="stat"><div class="lbl">Value</div><div class="val">${money(T.value, B)}</div></div>
