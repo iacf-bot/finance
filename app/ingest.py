@@ -346,7 +346,7 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
         if reimb:
             out["prefill"].update(reimbursable=True, reimb_payer=payer)
         msg = short_message(db, out, ptext if reimb else text, dry_run=True, force_review=force_review)
-        out["message"] = _reimb_msg(msg) if reimb else msg
+        out["message"] = _project_note(_reimb_msg(msg) if reimb else msg, res)
         return out
     data = {"kind": res.kind, "date": res.date, "amount": res.amount or 0, "currency": res.currency,
             "account_id": res.account_id, "to_account_id": res.to_account_id, "category_id": res.category_id,
@@ -364,8 +364,14 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
         out["warning"] = str(e)
         out["transaction"] = ledger.create_tx(db, data)
     msg = short_message(db, out, ptext if reimb else text, force_review=force_review)
-    out["message"] = _reimb_msg(msg) if reimb else msg
+    out["message"] = _project_note(_reimb_msg(msg) if reimb else msg, res)
     return out
+
+
+def _project_note(msg: str, res) -> str:
+    if getattr(res, "project_unknown", None):
+        return msg + f" · project “{res.project_unknown}” not found (or archived) 未找到项目"
+    return msg
 
 
 # ---------------------------------------------------------------- email ingest

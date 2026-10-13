@@ -21,6 +21,18 @@ if (-not (Test-Path $py)) {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $py)) { exit 1 }
 }
 
+# After an update (new zip unpacked over the old folder): install any packages added to requirements.txt
+$req = Join-Path $AppDir 'requirements.txt'
+$stamp = Join-Path $AppDir '.venv\requirements.sha256'
+$want = (Get-FileHash -Algorithm SHA256 -LiteralPath $req).Hash
+$have = if (Test-Path $stamp) { (Get-Content -LiteralPath $stamp -Raw).Trim() } else { '' }
+if ($want -ne $have) {
+    Write-Host 'requirements.txt changed: installing/updating packages ...' -ForegroundColor Cyan
+    & $py -m pip install --disable-pip-version-check -q -r $req
+    if ($LASTEXITCODE -eq 0) { Set-Content -LiteralPath $stamp -Value $want -Encoding ascii }
+    else { Write-Host 'pip install failed; some features (e.g. receipt photos) may not work. Run setup.bat.' -ForegroundColor Yellow }
+}
+
 $data = Get-DataDir
 $logs = Join-Path $data 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null

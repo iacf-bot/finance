@@ -68,6 +68,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host 'pip install failed (see the messages above). Check the internet connection / proxy and run setup again.' -ForegroundColor Red
     exit 1
 }
+Set-Content -LiteralPath (Join-Path $AppDir '.venv\requirements.sha256') -Value (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $AppDir 'requirements.txt')).Hash -Encoding ascii
 & $venvPy -c "import fastapi, uvicorn, cryptography, zoneinfo; zoneinfo.ZoneInfo('America/Los_Angeles'); print('Packages OK')"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 

@@ -49,7 +49,7 @@ def ocr_status() -> dict:
     try:
         import pytesseract  # noqa: F401
     except ImportError:
-        return {"available": False, "languages": [], "message": "OCR not installed: pip install pytesseract pillow (and Tesseract itself). Photos are still saved; enter the details by hand."}
+        return {"available": False, "languages": [], "message": "OCR packages missing (Pillow/pytesseract): run setup.bat on Windows or .venv/bin/pip install -r requirements.txt, then restart. Photos are still saved; enter the details by hand."}
     cmd = _tesseract_cmd()
     if not cmd:
         return {"available": False, "languages": [], "message": "Tesseract OCR not found on this machine (Linux: apt install tesseract-ocr tesseract-ocr-chi-sim; Windows: winget install UB-Mannheim.TesseractOCR). Photos are still saved; enter the details by hand."}
@@ -66,6 +66,8 @@ def ocr_status() -> dict:
 
 def ocr_image(img, denoise: bool = False) -> tuple[str, float | None]:
     """(text, mean word confidence 0..1) for a PIL image; ('', None) when OCR is unavailable."""
+    if img is None:
+        return "", None
     st = ocr_status()
     if not st["available"]:
         return "", None
@@ -253,7 +255,12 @@ def load_image(data: bytes, name: str = ""):
         raise ReceiptError("Empty file")
     if len(data) > MAX_BYTES:
         raise ReceiptError(f"Image too large (max {MAX_BYTES // 1024 // 1024} MB)")
-    from PIL import Image
+    try:
+        from PIL import Image
+    except ImportError:  # no Pillow (e.g. an updated install without re-running setup): store the photo, skip OCR
+        if not looks_like_image(data):
+            raise ReceiptError("Not a supported image (JPEG, PNG, WebP, HEIC)")
+        return None, data, magic_ext(data)
     Image.MAX_IMAGE_PIXELS = MAX_PIXELS
     heic = data[4:12] in (b"ftypheic", b"ftypheix", b"ftyphevc", b"ftypmif1", b"ftypmsf1") or name.lower().endswith((".heic", ".heif"))
     if heic:
@@ -282,6 +289,107 @@ def decode_b64(s: str) -> bytes:
         return base64.b64decode(s, validate=False)
     except Exception:
         raise ReceiptError("Invalid base64 image")
+
+
+IMAGE_MAGIC = (b"\xff\xd8\xff", b"\x89PNG", b"GIF8", b"BM", b"II*\x00", b"MM\x00*")
+
+
+def magic_ext(b: bytes) -> str:
+    if b.startswith(b"\x89PNG"):
+        return "png"
+    if b.startswith(b"GIF8"):
+        return "gif"
+    if b[:4] == b"RIFF":
+        return "webp"
+    if b[4:8] == b"ftyp":
+        return "heic"
+    if b.startswith(b"BM"):
+        return "bmp"
+    if b.startswith((b"II*\x00", b"MM\x00*")):
+        return "tif"
+    return "jpg"
+
+
+def looks_like_image(b: bytes) -> bool:
+    """Sniff the bytes (ignores filename / content type, which Shortcuts often gets wrong)."""
+    if not b or len(b) < 12:
+        return False
+    return b.startswith(IMAGE_MAGIC) or (b[:4] == b"RIFF" and b[8:12] == b"WEBP") or b[4:8] == b"ftyp"
+
+
+def _maybe_b64_image(v) -> bytes | None:
+    if isinstance(v, bytes):
+        try:
+            v = v.decode("ascii")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(v, str) or len(v) < 64:
+        return None
+    try:
+        b = decode_b64(re.sub(r"\s+", "", v))
+    except ReceiptError:
+        return None
+    return b if looks_like_image(b) else None
+
+
+PARAM_KEYS = ("auto_post", "account_id", "ledger_id", "filename")
+
+
+def extract_upload(raw: bytes, ctype: str) -> tuple[list[tuple[bytes, str]], dict]:
+    """Every image in a request, whatever the shape: multipart with any field name (file or text part, with or
+    without filename/content type), raw image body (image/*, octet-stream, or none), or JSON with base64 in
+    image/images/file/photo/any value. Returns ([(bytes, filename)], params)."""
+    items, params = [], {}
+    ct = (ctype or "").lower()
+    if not raw:
+        return items, params
+    if ct.startswith("multipart/"):
+        import email.parser
+        import email.policy
+        msg = email.parser.BytesParser(policy=email.policy.HTTP).parsebytes(
+            b"Content-Type: " + ctype.encode("latin-1", "replace") + b"\r\n\r\n" + raw)
+        for part in msg.iter_parts() if msg.is_multipart() else []:
+            name = part.get_param("name", header="content-disposition") or ""
+            fname = part.get_filename() or ""
+            data = part.get_payload(decode=True) or b""
+            if looks_like_image(data):
+                items.append((data, fname))
+            elif name.lower() in PARAM_KEYS:
+                params[name.lower()] = data.decode("utf-8", "replace").strip()
+            elif (b := _maybe_b64_image(data)) is not None:
+                items.append((b, fname))
+            elif fname or len(data) > 1024:
+                items.append((data, fname))  # unknown file: let load_image give a clear error (e.g. a PDF)
+        return items, params
+    if ct.startswith("application/x-www-form-urlencoded"):  # Shortcuts "Form" with Text fields (base64)
+        from urllib.parse import parse_qsl
+        for k, v in parse_qsl(raw.decode("latin-1"), keep_blank_values=True):
+            if k.lower() in PARAM_KEYS:
+                params[k.lower()] = v.strip()
+            elif (b := _maybe_b64_image(v)) is not None:
+                items.append((b, ""))
+        return items, params
+    if ct.startswith("application/json") or raw[:1] in (b"{", b"["):
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            raise ReceiptError("Body looks like JSON but isn't valid JSON")
+        vals = body if isinstance(body, list) else []
+        if isinstance(body, dict):
+            params = {k: body[k] for k in PARAM_KEYS if body.get(k) not in (None, "")}
+            for k, v in body.items():
+                if k in PARAM_KEYS:
+                    continue
+                vals += v if isinstance(v, list) else [v]
+        for v in vals:
+            if (b := _maybe_b64_image(v)) is not None:
+                items.append((b, str(params.get("filename") or "")))
+        if not items and any(isinstance(v, str) and len(v) > 64 for v in vals):
+            raise ReceiptError("Got JSON but the image isn't valid base64 (Shortcuts: use Base64 Encode on the photo)")
+        return items, params
+    if (b := _maybe_b64_image(raw)) is not None:  # text/plain base64 body
+        return [(b, "")], params
+    return [(raw, "")], params  # raw image body (image/*, octet-stream, missing content type)
 
 
 def _dumps(x) -> str:
@@ -418,7 +526,10 @@ def cleanup_drafts(db: Database, days: int = 14) -> int:
 
 
 def thumbnail(path: Path, size: int = 360) -> bytes:
-    from PIL import Image, ImageOps
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return path.read_bytes()
     img = ImageOps.exif_transpose(Image.open(path))
     img.thumbnail((size, size))
     buf = io.BytesIO()

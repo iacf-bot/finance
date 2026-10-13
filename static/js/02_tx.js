@@ -89,7 +89,7 @@ VIEWS.transactions = async (v, rest) => {
     <select name="reconciled"><option value="">Reconciled or not 对账状态</option><option value="1" ${f.reconciled === '1' ? 'selected' : ''}>✔ Reconciled 已对账</option><option value="0" ${f.reconciled === '0' ? 'selected' : ''}>Not reconciled 未对账</option></select>
     <div class="row"><button class="btn pri">Filter</button><button type="button" class="btn" id="fReset">Reset</button></div></form></div>
   <div class="card" style="margin-top:14px"><h3><span id="txCount"></span><span class="sp"></span>
-    <button class="btn sm danger" id="bulkDel" disabled>Delete selected</button>
+    <button class="btn sm" id="bulkPrj" disabled>📁 Assign project 归入项目</button> <button class="btn sm danger" id="bulkDel" disabled>Delete selected</button>
     <a class="btn sm" id="expCsv">⬇ Export CSV</a><a class="btn sm" href="#/settings/import">⬆ Import</a><button class="btn sm pri" onclick="openTx()">+ New</button></h3><div id="txList"></div>
     </div>`;
   const load = async () => {
@@ -101,7 +101,7 @@ VIEWS.transactions = async (v, rest) => {
     (S.observers || []).forEach(o => o.disconnect()); S.observers = [];
     $('#txList').innerHTML = txTable([], {select: true, tbodyId: 'txBody'});
     $('#txCount').textContent = 'Loading… 加载中';
-    const upd = () => { $('#bulkDel').disabled = !$$('.sel:checked').length; };
+    const upd = () => { const n = !$$('.sel:checked').length; $('#bulkDel').disabled = n; $('#bulkPrj').disabled = n; };
     infiniteList($('#txList'), {
       load: cursor => api('/api/transactions?' + new URLSearchParams([...base, ['limit', '50'], ...(cursor ? [['before', cursor]] : [])])),
       append: (r, first) => {
@@ -120,6 +120,7 @@ VIEWS.transactions = async (v, rest) => {
   };
   $('#flt').onsubmit = e => { e.preventDefault(); const fd = new FormData(e.target); S.txf = {limit: 100}; fd.forEach((val, k) => { if (val) S.txf[k] = val; }); Object.assign(f, S.txf); Object.keys(f).forEach(k => { if (!(k in S.txf)) delete f[k]; }); load(); };
   $('#fReset').onclick = () => { S.txf = {limit: 100}; location.hash = '#/transactions'; route(); };
+  $('#bulkPrj').onclick = () => assignProjectDialog($$('.sel:checked').map(c => +c.value), () => load());
   $('#bulkDel').onclick = async () => { const ids = $$('.sel:checked').map(c => +c.value); if (!await confirmBox(`Delete ${ids.length} transactions?`)) return; await guard(() => api('/api/transactions/bulk-delete', {method: 'POST', body: {ids}})); toast('Deleted'); load(); loadMeta(); };
   await load();
 };

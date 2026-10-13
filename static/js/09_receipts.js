@@ -20,14 +20,14 @@ function rcUpload(files, onProgress, extra = {}) {
     x.upload.onprogress = e => e.lengthComputable && onProgress(e.loaded / e.total);
     x.upload.onload = () => onProgress(1);
     x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) { /* ignore */ }
-      x.status < 300 ? resolve(j) : reject(new Error(j.detail || ('Upload failed ' + x.status))); };
+      x.status < 300 ? resolve(j) : reject(new Error(j.detail || (x.status === 401 ? 'Not signed in — reload the page' : x.status === 413 ? 'Photo too large' : 'Upload failed (HTTP ' + x.status + ')'))); };
     x.onerror = () => reject(new Error('Network error'));
     x.send(fd);
   });
 }
 /* Shows previews + progress, uploads, OCRs. Resolves with the /api/receipts response (draft, receipt ids) or null. */
 async function rcProcess(fileList) {
-  const files = [...fileList].filter(f => /^image\//.test(f.type) || /\.(heic|heif)$/i.test(f.name || ''));
+  const files = [...fileList].filter(f => !f.type || /^image\//.test(f.type) || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name || '') || f.type === 'application/octet-stream');
   if (!files.length) { toast('Please choose image files (JPEG, PNG, HEIC)', true); return null; }
   const bg = modal('Receipt 小票', `<div class="rc-prev">${files.map(() => '<div class="rc-ph"></div>').join('')}</div>
     <div class="rc-prog"><div class="bar"><i id="rcBar" style="width:2%"></i></div><div class="small muted" id="rcStep">Preparing 准备中…</div></div>`);
