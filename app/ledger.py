@@ -356,6 +356,7 @@ def parse_ctx(db: Database) -> dict:
         "merchants": db.all("SELECT * FROM merchants"),
         "members": db.all("SELECT * FROM members"),
         "projects": db.all("SELECT * FROM projects"),
+        "plan_lines": db.all("SELECT id, project_id, name, sort FROM project_plan_lines ORDER BY sort, id"),
         "default_account_id": db.get_setting("default_account_id") or None,
         "now": datetime.now(),
     }
@@ -365,7 +366,7 @@ def parse_ctx(db: Database) -> dict:
 TX_FIELDS = ["ledger_id", "kind", "date", "amount", "currency", "account_id", "to_account_id", "to_amount",
              "orig_amount", "orig_currency", "category_id", "merchant_id", "member_id", "project_id", "tags", "note",
              "source", "attachment", "status", "confidence", "raw_text", "external_id", "ticker", "shares", "price",
-             "fee", "is_demo", "pr_class", "reimbursable", "reimb_payer", "reimb_expected", "reimb_note"]
+             "fee", "is_demo", "pr_class", "reimbursable", "reimb_payer", "reimb_expected", "reimb_note", "plan_line_id"]
 
 
 def _norm_date(d: Any) -> str:
@@ -405,13 +406,20 @@ def normalize_tx(con, data: dict, rates: dict[str, float], existing: dict | None
     if isinstance(tags, (list, tuple)):
         tags = ",".join(str(t).strip() for t in tags if str(t).strip())
     tx["tags"] = ",".join(t.strip().lstrip("#") for t in (tags or "").split(",") if t.strip())
-    for k in ("account_id", "to_account_id", "category_id", "merchant_id", "member_id", "project_id", "ledger_id"):
+    for k in ("account_id", "to_account_id", "category_id", "merchant_id", "member_id", "project_id", "ledger_id", "plan_line_id"):
         if tx.get(k) in ("", 0, "0"):
             tx[k] = None
         elif tx.get(k) is not None:
             tx[k] = int(tx[k])
     if not tx.get("ledger_id"):
         tx["ledger_id"] = 1
+    # plan line 预算明细: must belong to the transaction's project; changing the project drops a stale line
+    if tx.get("plan_line_id"):
+        row = con.execute("SELECT project_id FROM project_plan_lines WHERE id=?", (tx["plan_line_id"],)).fetchone()
+        if not row or row[0] != tx.get("project_id"):
+            if "plan_line_id" in data:
+                raise ValidationError("That plan line belongs to a different project (or no longer exists)")
+            tx["plan_line_id"] = None
     for k in ("amount", "to_amount", "shares", "price", "fee", "orig_amount"):
         if tx.get(k) in ("", None):
             tx[k] = None
@@ -553,11 +561,12 @@ TX_SELECT = """SELECT t.*, a.name account_name, a.currency account_currency, ta.
   c.name category_name, c.name_zh category_name_zh, pc.name parent_category_name, pc.name_zh parent_category_name_zh,
   c.code category_code, a.type account_type,
   (SELECT MAX(rc.reconciliation_id) FROM reconciled_tx rc WHERE rc.transaction_id=t.id) reconciled_id,
-  c.parent_id parent_category_id, m.name merchant_name, mb.name member_name, p.name project_name, l.name ledger_name
+  c.parent_id parent_category_id, m.name merchant_name, mb.name member_name, p.name project_name, l.name ledger_name, ppl.name plan_line_name
   FROM transactions t LEFT JOIN accounts a ON a.id=t.account_id LEFT JOIN accounts ta ON ta.id=t.to_account_id
   LEFT JOIN categories c ON c.id=t.category_id LEFT JOIN categories pc ON pc.id=c.parent_id
   LEFT JOIN merchants m ON m.id=t.merchant_id LEFT JOIN members mb ON mb.id=t.member_id
-  LEFT JOIN projects p ON p.id=t.project_id LEFT JOIN ledgers l ON l.id=t.ledger_id"""
+  LEFT JOIN projects p ON p.id=t.project_id LEFT JOIN ledgers l ON l.id=t.ledger_id
+  LEFT JOIN project_plan_lines ppl ON ppl.id=t.plan_line_id"""
 
 
 def decorate(t: dict) -> dict:
@@ -819,11 +828,11 @@ def _flow_rows(db: Database, start: str, end: str, ledger_id: int | None, projec
         cond += " AND t.ledger_id=?"; params.append(ledger_id)
     if project_id:
         cond += " AND t.project_id=?"; params.append(project_id)
-    rows = [r for r in db.all(f"""SELECT t.kind, {REPORT_AMOUNT_SQL} amount, t.currency, t.date, t.category_id, c.parent_id,
+    rows = [r for r in db.all(f"""SELECT t.kind, {REPORT_AMOUNT_SQL} amount, t.currency, t.date, t.category_id, c.parent_id, t.id, t.plan_line_id,
         t.member_id, t.merchant_id, t.project_id, t.account_id, t.tags FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
         WHERE {cond} AND t.kind IN ('expense','income','refund')""", params) if not (r["kind"] == "expense" and not r["amount"])]
     for r in db.all(f"""SELECT t.amount, t.currency, t.date, t.category_id, t.member_id, t.merchant_id, t.project_id,
-        t.account_id, t.tags, {REASON_SQL} reason FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
+        t.account_id, t.tags, t.id, t.plan_line_id, {REASON_SQL} reason FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
         LEFT JOIN accounts a ON a.id=t.account_id
         WHERE {cond} AND t.kind='adjustment' AND (c.code IN ('unrecorded_spending','unrecorded_income')
           OR (c.code='fees' AND a.type NOT IN {INVEST_TYPES_SQL}))""", params):

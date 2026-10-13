@@ -49,6 +49,8 @@ class ParseResult:
     member_id: int | None = None
     project_id: int | None = None
     project_unknown: str | None = None  # "#项目:X" naming no (active) project
+    plan_line_id: int | None = None  # "#p:Project/Line"
+    plan_line_unknown: str | None = None  # "/Line" naming no plan line of that project
     tags: list[str] = field(default_factory=list)
     date: str | None = None
     confidence: float = 0.0
@@ -58,7 +60,8 @@ class ParseResult:
         return asdict(self)
 
 
-PROJECT_TAG_RX = re.compile(r'(?<!\S)#(?:项目|project|proj|p):(?:"([^"]+)"|([^\s#]+))', re.I)
+# "#p:Name", "#p:Name/Line", '#p:"Japan trip"/"Hotel & food"' or '#p:"Japan trip/Hotel"' (Line = a plan line 预算明细)
+PROJECT_TAG_RX = re.compile(r'(?<!\S)#(?:项目|project|proj|p):(?:"([^"]+)"|([^\s#/]+))(?:/(?:"([^"]+)"|([^\s#]*)))?', re.I)
 
 
 def match_project(projects: list[dict], name: str) -> dict | None:
@@ -74,6 +77,21 @@ def match_project(projects: list[dict], name: str) -> dict | None:
             return hits[0]
         if hits:
             return None  # ambiguous
+    return None
+
+
+def match_plan_line(lines: list[dict], project_id: int, name: str) -> dict | None:
+    """Plan line of the project by exact name, else unique prefix, else unique substring (case-insensitive)."""
+    n = (name or "").strip().lower()
+    cand = [(l["name"].lower(), l) for l in lines if l["project_id"] == project_id]
+    if not n:
+        return None
+    for ok in (lambda k: k == n, lambda k: k.startswith(n), lambda k: n in k):
+        hits = [l for k, l in cand if ok(k)]
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
+            return None
     return None
 
 
@@ -258,9 +276,22 @@ def parse_quick_add(text: str, ctx: dict) -> ParseResult:
     pm = PROJECT_TAG_RX.search(t)
     if pm:
         want = (pm.group(1) or pm.group(2) or "").strip()
+        line = pm.group(3) if pm.group(3) is not None else pm.group(4)
         t = (t[:pm.start()] + t[pm.end():]).strip()
         res.text = t
         hit = match_project(ctx.get("projects") or [], want)
+        if not hit and line is None and "/" in want:  # '#p:"Japan trip/Hotel"'
+            pn, _, ln = want.rpartition("/")
+            if match_project(ctx.get("projects") or [], pn):
+                want, line = pn, ln
+                hit = match_project(ctx.get("projects") or [], want)
+        if hit and line and line.strip():
+            lh = match_plan_line(ctx.get("plan_lines") or [], hit["id"], line)
+            if lh:
+                res.plan_line_id = lh["id"]
+                res.reasons.append(f"plan line {lh['name']}")
+            else:
+                res.plan_line_unknown = line.strip()
         if hit:
             res.project_id = hit["id"]
             res.reasons.append(f"project #{hit['name']}")

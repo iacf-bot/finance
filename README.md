@@ -715,3 +715,14 @@ The web UI is English by default and also ships in 简体中文 (zh-CN) and 繁�
 3. Add `<script src="/static/locales/<code>.js"></script>` next to the other locale scripts in `static/index.html`.
 
 `zh-TW` is generated from zh-CN with `python scripts/i18n_build.py --tw` (needs `pip install opencc-python-reimplemented`, a dev-only tool). Fixes go in `_overrides` in `locales/zh-TW.json`. New UI text should be plain English in the source; add its translation to the locale JSON files.
+
+## Project plan lines
+
+A project's budget plan is a list of lines you name yourself (for a trip: Flights, Hotel, Transportation, Meals, Tickets, Shopping...). Each line has a planned amount and currency, plus optional notes. A line can be mapped to one or more categories or sub-categories, or you can assign transactions to it directly.
+
+- **Where each transaction counts (once):** the line it is assigned to; otherwise the first line mapped to its sub-category, then its top-level category; otherwise the line marked "catches the rest"; otherwise **Unplanned**.
+- **Project page:** a plan-vs-actual table showing planned, actual, left, % used and an over-budget highlight. Click a line to see its transactions. Lines can be added, edited, reordered and deleted in place.
+- **Templates:** Vacation, Home renovation and Event / Wedding. They suggest category matches from your own categories by name. You can also copy the plan from another project, optionally scaling the amounts.
+- **Assigning a line:** pick it in the transaction form after choosing a project, or use quick add: `#p:日本旅行/Flights` or `#p:"Japan trip"/"Hotel"`. Unique prefixes work.
+- **API:** `GET/POST /api/projects/{id}/plan-lines`, `PUT/DELETE /api/projects/{id}/plan-lines/{line}`, `POST …/plan-lines/reorder`, `POST …/plan-lines/template`, `POST …/plan-lines/copy`, `GET …/plan-lines/{line|unplanned}/transactions`, and `GET /api/plan-templates`.
+- **Older category plans** (`/api/projects/{id}/plan`) were copied into lines once, one line per category. Their original rows are kept, and that endpoint keeps working: it mirrors its changes into the lines.

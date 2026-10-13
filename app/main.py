@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import config, demo, importers, ingest, ledger, principal, projects, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
+from . import config, demo, importers, ingest, ledger, plan_lines, principal, projects, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -188,6 +188,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             "members": db.all("SELECT * FROM members ORDER BY id"),
             "merchants": db.all("SELECT * FROM merchants ORDER BY name"),
             "projects": db.all("SELECT * FROM projects ORDER BY archived, name"),
+            "plan_lines": db.all("SELECT id, project_id, name, sort FROM project_plan_lines ORDER BY project_id, sort, id"),
             "accounts": db.all("""SELECT id, name, type, currency, archived, aliases, last4,
                 (SELECT MAX(as_of) FROM reconciliations r WHERE r.account_id=accounts.id) reconciled_at
                 FROM accounts ORDER BY archived, sort, name"""),
@@ -912,7 +913,9 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         if not isinstance(body, dict):
             body = {"text": raw.decode("utf-8-sig", errors="replace")}
         lower = {str(k).lower(): v for k, v in body.items()}
-        text = str(lower.get("text") or "").strip().strip('"').strip()
+        text = str(lower.get("text") or "").strip()
+        if len(text) > 1 and text[0] == text[-1] == '"' and text.count('"') == 2:  # Shortcuts sometimes wrap the text in quotes
+            text = text[1:-1].strip()
 
         def flag(name):
             v = lower.get(name)
@@ -1002,7 +1005,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             return fn()
         except KeyError:
             raise HTTPException(404, "Project not found")
-        except projects.ProjectError as e:
+        except (projects.ProjectError, plan_lines.PlanError) as e:
             raise HTTPException(400, str(e))
 
     @app.get("/api/projects")
@@ -1040,6 +1043,56 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     @app.post("/api/projects/{pid}/plan/copy")
     def copy_plan(pid: int, body: dict = Body(...)):
         return _prj(lambda: projects.copy_plan(db, pid, int(body.get("from_project_id") or 0), body.get("scale") or 1))
+
+    # plan lines 预算明细 (free-named lines mapped to categories and/or explicitly assigned transactions)
+    @app.get("/api/plan-templates")
+    def plan_templates():
+        return {"templates": plan_lines.templates(db)}
+
+    @app.get("/api/projects/{pid}/plan-lines")
+    def get_plan_lines(pid: int):
+        return _prj(lambda: (projects.get(db, pid), {"project_id": pid, "lines": plan_lines.lines(db, pid)})[1])
+
+    @app.post("/api/projects/{pid}/plan-lines")
+    def add_plan_line(pid: int, body: dict = Body(...)):
+        return _prj(lambda: plan_lines.create(db, pid, body))
+
+    @app.post("/api/projects/{pid}/plan-lines/bulk")
+    def bulk_plan_lines(pid: int, body: dict = Body(...)):
+        return _prj(lambda: plan_lines.bulk(db, pid, body.get("lines") or [], bool(body.get("replace"))))
+
+    @app.post("/api/projects/{pid}/plan-lines/reorder")
+    def reorder_plan_lines(pid: int, body: dict = Body(...)):
+        return _prj(lambda: plan_lines.reorder(db, pid, body.get("ids") or []))
+
+    @app.post("/api/projects/{pid}/plan-lines/template")
+    def template_plan_lines(pid: int, body: dict = Body(...)):
+        return _prj(lambda: plan_lines.apply_template(db, pid, str(body.get("template") or ""), bool(body.get("replace")),
+                                                      body.get("amounts"), body.get("names")))
+
+    @app.post("/api/projects/{pid}/plan-lines/copy")
+    def copy_plan_lines(pid: int, body: dict = Body(...)):
+        return _prj(lambda: plan_lines.copy_from(db, pid, int(body.get("from_project_id") or 0), body.get("scale") or 1,
+                                                 body.get("replace", True) is not False))
+
+    @app.get("/api/projects/{pid}/plan-lines/{line}/transactions")
+    def plan_line_txs(pid: int, line: str, start: str | None = None, end: str | None = None, ledger_id: int | None = None):
+        def run():
+            p = projects.get(db, pid)
+            s, e = projects._range(p, start, end)
+            return plan_lines.line_transactions(db, pid, line, s, e, ledger_id)
+        try:
+            return _prj(run)
+        except ValueError:
+            raise HTTPException(400, "line must be a plan line id or 'unplanned'")
+
+    @app.put("/api/projects/{pid}/plan-lines/{lid}")
+    def upd_plan_line(pid: int, lid: int, body: dict = Body(...)):
+        return _prj(lambda: plan_lines.update(db, pid, lid, body))
+
+    @app.delete("/api/projects/{pid}/plan-lines/{lid}")
+    def del_plan_line(pid: int, lid: int):
+        return _prj(lambda: plan_lines.delete(db, pid, lid))
 
     @app.post("/api/projects/{pid}/archive")
     def archive_project(pid: int, body: dict = Body(default={})):

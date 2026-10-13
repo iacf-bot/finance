@@ -91,7 +91,9 @@ def load_demo(db: Database) -> dict:
     # one refund, a trip, investments
     add("refund", today - timedelta(days=12), 42.99, A("Amex Gold"), _cat(db, "expense", "Online Shopping"), "[DEMO] Amazon", "returned headphones")
     trip_day = today - timedelta(days=60)
-    for i, (amt, sub, note) in enumerate([(820, "Flights", "flight to Tokyo"), (640, "Travel & Hotels", "hotel"), (85, "Meals", "ramen")]):
+    for i, (amt, sub, note) in enumerate([(820, "Flights", "flight to Tokyo"), (640, "Travel & Hotels", "hotel"), (85, "Meals", "ramen"),
+                                          (46, "Taxi & Rideshare", "taxi from station"), (128, "Meals", "sushi dinner"),
+                                          (64, None, "teamLab tickets"), (72, "Gifts", "souvenirs"), (18, "Snacks & Fruit", "convenience store")]):
         add("expense", trip_day + timedelta(days=i), amt, A("Chase Sapphire"), _cat(db, "expense", sub), None, note, project_id=trip, tags="travel,japan")
     add("expense", today - timedelta(days=3), 68, A("Chase Sapphire"), _cat(db, "expense", "Gifts"), None, "birthday gift", member_id=partner)
     inv0 = start + timedelta(days=5)
@@ -104,6 +106,23 @@ def load_demo(db: Database) -> dict:
                 "category_id": _cat(db, "income", "Dividends")})
     for t in txs:
         ledger.create_tx(db, t)
+    # demo plan lines for the trip (FAKE): category-matched lines, one explicit assignment, a catch-all line
+    cat_ids = {c: _cat(db, "expense", c) for c in ("Flights", "Travel & Hotels", "Taxi & Rideshare", "Meals", "Gifts")}
+    with db.tx() as con:
+        trip_id = con.execute("SELECT id FROM projects WHERE name='[DEMO] Japan trip 日本旅行'").fetchone()[0]
+        if not con.execute("SELECT 1 FROM project_plan_lines WHERE project_id=?", (trip_id,)).fetchone():
+            for i, (nm, amt, cats, note, catch) in enumerate([
+                    ("Flights", 900, ["Flights"], "2 seats, economy", 0), ("Hotel", 600, ["Travel & Hotels"], "4 nights", 0),
+                    ("Transportation", 150, ["Taxi & Rideshare"], None, 0), ("Meals", 300, ["Meals"], None, 0),
+                    ("Activities / Tickets", 120, [], None, 0), ("Shopping", 200, ["Gifts"], None, 0), ("Other", 50, [], None, 1)]):
+                lid = con.execute("INSERT INTO project_plan_lines(project_id,name,amount,note,sort,catch_all) VALUES(?,?,?,?,?,?)",
+                                  (trip_id, nm, amt, note, (i + 1) * 10, catch)).lastrowid
+                for c in cats:
+                    cid = cat_ids.get(c)
+                    if cid:
+                        con.execute("INSERT OR IGNORE INTO project_plan_line_cats(line_id, category_id) VALUES(?,?)", (lid, cid))
+                if nm.startswith("Activities"):
+                    con.execute("UPDATE transactions SET plan_line_id=? WHERE project_id=? AND note='[DEMO] teamLab tickets'", (lid, trip_id))
     # review-inbox examples
     for text, src in (("[DEMO] dinner 58 maybe card?", "message"), ("[DEMO] 打车 32", "bot")):
         ledger.create_tx(db, {"kind": "expense", "date": datetime.now().strftime("%Y-%m-%d %H:%M"), "amount": 58 if "dinner" in text else 32,
@@ -129,6 +148,9 @@ def clear_demo(db: Database) -> dict:
                         demo_accts + demo_accts).rowcount
         con.execute("DELETE FROM budgets WHERE is_demo=1")
         con.execute("DELETE FROM accounts WHERE is_demo=1")
+        con.execute("DELETE FROM project_plan_line_cats WHERE line_id IN (SELECT l.id FROM project_plan_lines l "
+                    "JOIN projects p ON p.id=l.project_id WHERE p.is_demo=1)")
+        con.execute("DELETE FROM project_plan_lines WHERE project_id IN (SELECT id FROM projects WHERE is_demo=1)")
         for tbl in ("members", "merchants", "projects"):
             con.execute(f"DELETE FROM {tbl} WHERE is_demo=1")
         # merchants auto-created from demo-labelled quick-adds/emails, if nothing else uses them

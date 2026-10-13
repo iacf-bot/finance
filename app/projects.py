@@ -10,7 +10,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-from . import ledger
+from . import ledger, plan_lines
 from .db import Database, now_iso
 
 FIELDS = ("name", "description", "start_date", "end_date", "budget", "currency", "color", "icon", "archived", "note", "sort")
@@ -84,7 +84,9 @@ def update(db: Database, pid: int, body: dict) -> dict:
 def delete(db: Database, pid: int) -> dict:
     with db.tx() as con:
         con.execute("DELETE FROM project_budgets WHERE project_id=?", (pid,))
-        n = con.execute("UPDATE transactions SET project_id=NULL WHERE project_id=?", (pid,)).rowcount
+        con.execute("DELETE FROM project_plan_line_cats WHERE line_id IN (SELECT id FROM project_plan_lines WHERE project_id=?)", (pid,))
+        con.execute("DELETE FROM project_plan_lines WHERE project_id=?", (pid,))
+        n = con.execute("UPDATE transactions SET project_id=NULL, plan_line_id=NULL WHERE project_id=?", (pid,)).rowcount
         con.execute("DELETE FROM projects WHERE id=?", (pid,))
     return {"ok": True, "unassigned": n}
 
@@ -103,6 +105,9 @@ def assign(db: Database, ids: list[int], project_id: int | None) -> dict:
     with db.tx() as con:
         n = con.execute(f"UPDATE transactions SET project_id=?, updated_at=? WHERE id IN ({','.join('?' * len(ids))})",
                         [project_id, now_iso()] + ids).rowcount
+        # a plan line only makes sense inside its project
+        con.execute(f"""UPDATE transactions SET plan_line_id=NULL WHERE id IN ({','.join('?' * len(ids))}) AND plan_line_id IS NOT NULL
+            AND plan_line_id NOT IN (SELECT id FROM project_plan_lines WHERE project_id IS ?)""", ids + [project_id])
     return {"ok": True, "updated": n, "project_id": project_id}
 
 
@@ -139,6 +144,7 @@ def set_plan(db: Database, pid: int, lines: list[dict], replace: bool = True) ->
             con.execute("DELETE FROM project_budgets WHERE project_id=? AND COALESCE(category_id,0)=?", (pid, cid or 0))
             if amt > 0:
                 con.execute("INSERT INTO project_budgets(project_id, category_id, amount, note) VALUES(?,?,?,?)", (pid, cid, amt, note))
+    plan_lines.sync_category_plan(db, pid, clean_lines, replace)
     return {"project_id": pid, "lines": plan_rows(db, pid)}
 
 
@@ -285,7 +291,8 @@ def detail(db: Database, pid: int, start: str | None = None, end: str | None = N
            "by_category": bd("category"), "by_account": bd("account"), "by_member": bd("member"),
            "by_merchant": bd("merchant")[:30], "income_by_category": bd("category", "income"),
            "monthly": [{"month": k, "expense": round(exp_m.get(k, 0), 2), "income": round(inc_m.get(k, 0), 2)} for k in keys]}
-    out["plan"] = plan_vs_actual(db, p, s, e, ledger_id)
+    out["plan"] = plan_vs_actual(db, p, s, e, ledger_id)  # legacy category view
+    out["plan_lines"] = plan_lines.plan_vs_actual(db, p, s, e, ledger_id)
     if parent_id:
         out["drill"] = {"parent_id": parent_id, "rows": ledger.breakdown(db, s, e, "subcategory", "expense", ledger_id, pid, parent_id)}
     return out
