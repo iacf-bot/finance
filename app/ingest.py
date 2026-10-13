@@ -9,6 +9,7 @@ import imaplib
 import logging
 import os
 import re
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from email.message import Message
 from pathlib import Path
@@ -147,6 +148,44 @@ CUR_SYMBOL = {"USD": "$", "CNY": "¥", "RMB": "¥", "EUR": "€", "GBP": "£", "
               "CAD": "CA$", "AUD": "A$", "SGD": "S$", "KRW": "₩", "INR": "₹"}
 
 
+# Language of reply messages for the current request: set per request by main.py from the ?lang= param, else
+# Accept-Language, else English. Plain function calls (email ingest, scheduler) get English.
+MSG_LANG: ContextVar[str] = ContextVar("msg_lang", default="en")
+MSG_LANGS = ("en", "zh")
+
+
+def resolve_lang(param: str | None = None, accept: str | None = None) -> str:
+    """'zh' or 'en'. param ('zh', 'zh-CN', 'zh-TW', 'cn', 'en', ...) wins unless empty/'auto'; then the best
+    supported Accept-Language entry by q-value; otherwise English."""
+    def norm(code: str) -> str | None:
+        c = (code or "").strip().lower().replace("_", "-")
+        if c in ("cn", "chinese") or c.startswith("zh"):
+            return "zh"
+        if c == "en" or c.startswith("en-"):
+            return "en"
+        return None
+    if param and param.strip().lower() not in ("", "auto"):
+        return norm(param) or "en"
+    best, bq = None, -1.0
+    for i, part in enumerate((accept or "").split(",")):
+        bits = part.strip().split(";")
+        q = 1.0
+        for b in bits[1:]:
+            if b.strip().startswith("q="):
+                try:
+                    q = float(b.strip()[2:])
+                except ValueError:
+                    q = 0.0
+        code = norm(bits[0])
+        if code and q > 0 and q > bq:
+            best, bq = code, q
+    return best or "en"
+
+
+def msg_zh() -> bool:
+    return MSG_LANG.get() == "zh"
+
+
 def is_chinese(text: str | None) -> bool:
     return bool(CJK_RX.search(text or ""))
 
@@ -211,8 +250,8 @@ def _review_reason(out: dict, p: dict, zh: bool, force_review: bool) -> str:
 
 
 def short_message(db: Database, out: dict, text: str, dry_run: bool = False, force_review: bool = False) -> str:
-    """One line for Siri / Shortcuts / Apple Watch, in Chinese when the input text is Chinese."""
-    zh = is_chinese(text)
+    """One line for Siri / Shortcuts / Apple Watch, in the request's language (MSG_LANG; default English)."""
+    zh = msg_zh()
     sep = ": "
     action = out.get("action")
     p = out.get("parsed") or {}
@@ -270,7 +309,7 @@ def short_message(db: Database, out: dict, text: str, dry_run: bool = False, for
 
 
 def error_message(detail: str, text: str | None) -> str:
-    zh = is_chinese(text)
+    zh = msg_zh()
     detail = re.split(r"(?<=[.!?。！？])\s", (detail or "").strip(), maxsplit=1)[0] or "unknown error"
     return f"没记上: {detail}" if zh else f"Couldn't save: {detail}"
 
@@ -370,7 +409,9 @@ def quick_add(db: Database, text: str, source: str = "api", ledger_id: int | Non
 
 def _project_note(msg: str, res) -> str:
     if getattr(res, "project_unknown", None):
-        return msg + f" · project “{res.project_unknown}” not found (or archived) 未找到项目"
+        if msg_zh():
+            return msg + f" · 未找到项目“{res.project_unknown}”（或已归档）"
+        return msg + f" · project “{res.project_unknown}” not found (or archived)"
     return msg
 
 

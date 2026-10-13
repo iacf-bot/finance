@@ -10,7 +10,7 @@ const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${Str
 function localDT(d = new Date()) { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
 
 async function api(path, opts = {}) {
-  const o = {method: opts.method || 'GET', headers: {}};
+  const o = {method: opts.method || 'GET', headers: {'Accept-Language': i18nLocale()}};  // API 'message' texts follow the UI language
   if (opts.body instanceof FormData) o.body = opts.body;
   else if (opts.body !== undefined) { o.body = JSON.stringify(opts.body); o.headers['Content-Type'] = 'application/json'; }
   const r = await fetch(path, o);
@@ -26,13 +26,13 @@ async function guard(fn) { try { return await fn(); } catch (e) { toast(e.messag
 function money(v, cur) {
   cur = cur || (S.meta && S.meta.settings.base_currency) || 'USD';
   if (v === null || v === undefined || isNaN(v)) return '—';
-  try { return new Intl.NumberFormat(undefined, {style: 'currency', currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 2}).format(v); }
+  try { return new Intl.NumberFormat(i18nLocale(), {style: 'currency', currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 2}).format(v); }
   catch { return `${Number(v).toFixed(2)} ${cur}`; }
 }
-const num = (v, d = 2) => v === null || v === undefined ? '' : Number(v).toLocaleString(undefined, {maximumFractionDigits: d});
+const num = (v, d = 2) => v === null || v === undefined ? '' : Number(v).toLocaleString(i18nLocale(), {maximumFractionDigits: d});
 const confPill = c => c === null || c === undefined ? '' : `<span class="conf ${c >= .75 ? 'hi' : c >= .5 ? 'md' : 'lo'}">${Math.round(c * 100)}%</span>`;
-const kindLabel = {expense: 'Expense 支出', income: 'Income 收入', transfer: 'Transfer 转账', refund: 'Refund 退款', adjustment: 'Balance adj. 余额调整', buy: 'Buy 买入', sell: 'Sell 卖出', dividend: 'Dividend 分红', invest_fee: 'Fee 费用', reimbursement: 'Reimbursement 报销'};
-const srcLabel = {balance_set: 'Balance set 调整余额', opening_balance: 'Opening balance 期初余额', import: 'Import 导入', scheduled: '🔁 Scheduled 定时', reconcile: '✔ Reconcile 对账'};
+const kindLabel = {expense: 'Expense', income: 'Income', transfer: 'Transfer', refund: 'Refund', adjustment: 'Balance adj.', buy: 'Buy', sell: 'Sell', dividend: 'Dividend', invest_fee: 'Fee', reimbursement: 'Reimbursement'};
+const srcLabel = {balance_set: 'Balance set', opening_balance: 'Opening balance', import: 'Import', scheduled: '🔁 Scheduled', reconcile: '✔ Reconcile'};
 /* Reconciliation 对账: a transaction change dated on/before an account's latest checkpoint does not move today's balance.
    With Settings → General → lock on, the server answers 409 and we ask before retrying with confirm_reconciled. */
 function reconWarning(date, ...acctIds) {
@@ -51,7 +51,21 @@ async function reconApi(path, opts = {}) {
 }
 const isDemoName = n => /^\[DEMO\]/.test(n || '');
 
-async function loadMeta() { S.meta = await api('/api/meta'); renderNav(); renderLedgers(); return S.meta; }
+async function loadMeta() {
+  S.meta = await api('/api/meta');
+  const want = i18nDetect(i18nSaved() || (S.meta.prefs && S.meta.prefs.ui_lang) || '');
+  if (want !== I18N.lang) i18nSet(want, {persist: false});
+  i18nMeta(S.meta); renderNav(); renderLedgers(); renderLangs(); return S.meta;
+}
+function renderLangs() {
+  const sel = $('#langSel'); if (!sel) return;
+  sel.title = t('Language'); sel.innerHTML = i18nSupported().map(c => `<option value="${c}" ${c === I18N.lang ? 'selected' : ''}>🌐 ${esc(I18N.names[c])}</option>`).join('');
+  sel.onchange = async () => {
+    i18nSet(sel.value);
+    try { await api('/api/prefs', {method: 'PUT', body: {ui_lang: sel.value}}); } catch (e) { /* per-browser choice still applies */ }
+    location.reload();
+  };
+}
 const acctById = id => (S.meta.accounts || []).find(a => a.id == id);
 
 function modal(title, html, {wide = false, onOpen, buttons} = {}) {
@@ -65,12 +79,17 @@ function modal(title, html, {wide = false, onOpen, buttons} = {}) {
   if (onOpen) onOpen(bg);
   return bg;
 }
-function confirmBox(msg) { return Promise.resolve(window.confirm(msg)); }
+function confirmBox(msg) { return Promise.resolve(window.confirm(i18nText(msg))); }
 
 function chart(id, cfg) {
   if (S.charts[id]) S.charts[id].destroy();
   const el = document.getElementById(id); if (!el || !window.Chart) return;
   cfg.options = Object.assign({responsive: true, maintainAspectRatio: false, animation: false, plugins: {legend: {position: 'bottom', labels: {boxWidth: 12}}}}, cfg.options || {});
+  const tr = v => typeof v === 'string' ? i18nText(v) : v;  // canvas text is not reached by the DOM translator
+  if (cfg.data) {
+    if (Array.isArray(cfg.data.labels)) cfg.data.labels = cfg.data.labels.map(tr);
+    (cfg.data.datasets || []).forEach(d => { if (typeof d.label === 'string') d.label = tr(d.label); });
+  }
   S.charts[id] = new Chart(el, cfg);
 }
 const PALETTE = ['#e8553e','#3a7bd5','#14a06f','#e4a11b','#8e5cd9','#e05a9b','#17a2b8','#6c757d','#ff8a5c','#5ab4f0','#9bc53d','#c9a227'];
@@ -78,11 +97,11 @@ const PALETTE = ['#e8553e','#3a7bd5','#14a06f','#e4a11b','#8e5cd9','#e05a9b','#1
 /* options builders */
 function catOptions(kind, selected) {
   const roots = (S.meta.categories || []).filter(c => !kind || c.kind === kind || (kind === 'refund' && c.kind === 'expense'));
-  return `<option value="">— Category 分类 —</option>` + roots.map(r => `<optgroup label="${esc(r.name + ' ' + (r.name_zh || ''))}">` +
+  return `<option value="">— Category —</option>` + roots.map(r => `<optgroup label="${esc(r.name + ' ' + (r.name_zh || ''))}">` +
     `<option value="${r.id}" ${r.id == selected ? 'selected' : ''}>${esc(r.name)} (all) ${esc(r.name_zh || '')}</option>` +
     r.children.map(c => `<option value="${c.id}" ${c.id == selected ? 'selected' : ''}>${esc(c.name)} ${esc(c.name_zh || '')}</option>`).join('') + '</optgroup>').join('');
 }
-function acctOptions(selected, {blank = '— Account 账户 —', filter} = {}) {
+function acctOptions(selected, {blank = '— Account —', filter} = {}) {
   let a = (S.meta.accounts || []).filter(x => !x.archived || x.id == selected);
   if (filter) a = a.filter(filter);
   return (blank !== null ? `<option value="">${blank}</option>` : '') + a.map(x => `<option value="${x.id}" ${x.id == selected ? 'selected' : ''}>${esc(x.name)} (${x.currency})</option>`).join('');
@@ -127,9 +146,9 @@ function typeOptions(selected) { return Object.entries(S.meta.account_types).map
 
 /* ---------- navigation ---------- */
 const ROUTES = [
-  ['home', '🏠', 'Home 首页'], ['dashboard', '📊', 'Dashboard 仪表盘'], ['transactions', '🧾', 'Transactions 流水'], ['accounts', '🏦', 'Accounts 账户'],
-  ['investments', '📈', 'Investments 投资'], ['budgets', '🎯', 'Budgets 预算'], ['scheduled', '🔁', 'Scheduled 定时'], ['reimb', '🧾', 'Reimbursements 报销中心'], ['reminders', '⏰', 'Reminders 提醒中心'], ['projects', '📁', 'Projects 项目'], ['reports', '📉', 'Reports 报表'],
-  ['review', '📥', 'Quick add & Review 待确认'], ['settings', '⚙️', 'Settings 设置'],
+  ['home', '🏠', 'Home'], ['dashboard', '📊', 'Dashboard'], ['transactions', '🧾', 'Transactions'], ['accounts', '🏦', 'Accounts'],
+  ['investments', '📈', 'Investments'], ['budgets', '🎯', 'Budgets'], ['scheduled', '🔁', 'Scheduled'], ['reimb', '🧾', 'Reimbursements'], ['reminders', '⏰', 'Reminders'], ['projects', '📁', 'Projects'], ['reports', '📉', 'Reports'],
+  ['review', '📥', 'Quick add & Review'], ['settings', '⚙️', 'Settings'],
 ];
 function renderNav() {
   let cur = (location.hash.slice(2) || 'home').split(/[/?]/)[0]; if (cur === 'account') cur = 'accounts';
@@ -140,18 +159,18 @@ function renderNav() {
 }
 function renderLedgers() {
   const sel = $('#ledgerSel');
-  sel.innerHTML = `<option value="">All ledgers 全部账本</option>` + S.meta.ledgers.map(l => `<option value="${l.id}" ${l.id == S.ledger ? 'selected' : ''}>📒 ${esc(l.name)}</option>`).join('');
+  sel.innerHTML = `<option value="">All ledgers</option>` + S.meta.ledgers.map(l => `<option value="${l.id}" ${l.id == S.ledger ? 'selected' : ''}>📒 ${esc(l.name)}</option>`).join('');
 }
 const VIEWS = {};
-const HIDDEN_ROUTES = [['account', '🏦', 'Account 账户明细']];  // not in the sidebar (#/account/<id>)
+const HIDDEN_ROUTES = [['account', '🏦', 'Account']];  // not in the sidebar (#/account/<id>)
 
 /* Infinite scroll for cursor-paged lists (?before=<cursor>): an IntersectionObserver sentinel loads the next page,
    with a loading indicator and a "Load more" button as fallback. load(cursor) -> {items, has_more, next_cursor};
    append(page, isFirst) renders the rows. Returns {more(), done()} */
-function infiniteList(anchor, {load, append, endHtml = 'No more transactions 没有更多了', margin = '600px'}) {
+function infiniteList(anchor, {load, append, endHtml = 'No more transactions', margin = '600px'}) {
   let cursor = null, busy = false, done = false, first = true, dead = false;
   const foot = document.createElement('div'); foot.className = 'inf-foot';
-  foot.innerHTML = '<div class="inf-spin" hidden><span class="spinner"></span> Loading… 加载中</div><button type="button" class="btn" hidden>Load more 加载更多</button><div class="inf-end small muted" hidden></div><div class="inf-sentinel"></div>';
+  foot.innerHTML = '<div class="inf-spin" hidden><span class="spinner"></span> Loading… 加载中</div><button type="button" class="btn" hidden>Load more</button><div class="inf-end small muted" hidden></div><div class="inf-sentinel"></div>';
   anchor.after(foot);
   const [spin, btn, end, sent] = foot.children;
   const near = () => { const r = sent.getBoundingClientRect(); return r.top < innerHeight + 600 && r.bottom > -50 && foot.isConnected; };

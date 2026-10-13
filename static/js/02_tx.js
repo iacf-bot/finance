@@ -7,24 +7,24 @@ VIEWS.dashboard = async (v) => {
   ${empty ? `<div class="card" style="margin-bottom:16px"><h3>👋 Getting started</h3><p>Create your first account (bank, credit card, Alipay…) then record transactions with the + button or the quick-add box.</p>
      <div class="row"><a class="btn pri" href="#/accounts">Add an account</a><a class="btn" href="#/settings/import">Import from Suishouji 随手记 / bank CSV</a><button class="btn" onclick="loadDemo()">🧪 Load DEMO data (fake, removable)</button></div></div>` : ''}
   <div class="grid g4">
-    <div class="card stat hero"><div class="lbl">Net worth 净资产</div><div class="val">${money(nw.net_worth, nw.currency)}</div><div class="small">Assets ${money(nw.assets, nw.currency)} · Liabilities ${money(nw.liabilities, nw.currency)}</div></div>
-    <div class="card stat"><div class="lbl">Income this month 本月收入</div><div class="val pos">${money(t.income, t.currency)}</div></div>
-    <div class="card stat"><div class="lbl">Expense this month 本月支出</div><div class="val neg">${money(t.expense, t.currency)}</div></div>
-    <div class="card stat"><div class="lbl">Balance 结余 ${d.month}</div><div class="val ${t.net >= 0 ? 'pos' : 'neg'}">${money(t.net, t.currency)}</div>${d.investment_income ? `<div class="small" title="Investment gain/loss + interest + dividends − investment fees this month. Shown separately; not part of income/expense."><a href="#/investments">📈 Investment income 投资收益 <b class="${d.investment_income.total >= 0 ? 'pos' : 'neg'}">${money(d.investment_income.total, d.investment_income.currency)}</b></a></div>` : ''}${d.review_count ? `<div class="small"><a href="#/review">📥 ${d.review_count} to review</a></div>` : ''}</div>
+    <div class="card stat hero"><div class="lbl">Net worth</div><div class="val">${money(nw.net_worth, nw.currency)}</div><div class="small">Assets ${money(nw.assets, nw.currency)} · Liabilities ${money(nw.liabilities, nw.currency)}</div></div>
+    <div class="card stat"><div class="lbl">Income this month</div><div class="val pos">${money(t.income, t.currency)}</div></div>
+    <div class="card stat"><div class="lbl">Expense this month</div><div class="val neg">${money(t.expense, t.currency)}</div></div>
+    <div class="card stat"><div class="lbl">Balance ${d.month}</div><div class="val ${t.net >= 0 ? 'pos' : 'neg'}">${money(t.net, t.currency)}</div>${d.investment_income ? `<div class="small" title="Investment gain/loss + interest + dividends − investment fees this month. Shown separately; not part of income/expense."><a href="#/investments">📈 Investment income <b class="${d.investment_income.total >= 0 ? 'pos' : 'neg'}">${money(d.investment_income.total, d.investment_income.currency)}</b></a></div>` : ''}${d.review_count ? `<div class="small"><a href="#/review">📥 ${d.review_count} to review</a></div>` : ''}</div>
   </div>
   <div class="grid g2" style="margin-top:16px">
-    <div class="card"><h3>Spending by category 支出分类 · ${d.month}</h3>${d.by_category.length ? '<div class="chart-box"><canvas id="cPie"></canvas></div>' : '<div class="empty">No expenses this month</div>'}</div>
-    <div class="card"><h3>Income vs expense 收支趋势 (12 months)</h3><div class="chart-box"><canvas id="cTrend"></canvas></div></div>
-    <div class="card"><h3>Net worth over time 净资产走势</h3><div class="chart-box"><canvas id="cNW"></canvas></div><div class="small muted">Past months value investments at cost; the current month uses latest prices.</div></div>
-    <div class="card"><h3>Account balances 账户余额<span class="sp"></span><a class="small" href="#/accounts">All →</a></h3>${accountMini(d.accounts)}</div>
-    <div class="card"><h3>Upcoming 即将到期 (30 days)<span class="sp"></span><a class="small" href="#/scheduled">Scheduled →</a></h3>${upcomingList(d.upcoming || [])}</div>
-    <div class="card"><h3>Budgets 预算<span class="sp"></span><a class="small" href="#/budgets">Manage →</a></h3>${d.budgets.length ? d.budgets.map(budgetRow).join('') : '<div class="empty">No budgets for this month</div>'}</div>
-    <div class="card"><h3>Recent activity 最近流水<span class="sp"></span><a class="small" href="#/transactions">All →</a></h3>${txTable(d.recent, {compact: true})}</div>
+    <div class="card"><h3>Spending by category · ${d.month}</h3>${d.by_category.length ? '<div class="chart-box"><canvas id="cPie"></canvas></div>' : '<div class="empty">No expenses this month</div>'}</div>
+    <div class="card"><h3>Income vs expense (12 months)</h3><div class="chart-box"><canvas id="cTrend"></canvas></div></div>
+    <div class="card"><h3>Net worth over time</h3><div class="chart-box"><canvas id="cNW"></canvas></div><div class="small muted">Past months value investments at cost; the current month uses latest prices.</div></div>
+    <div class="card"><h3>Account balances<span class="sp"></span><a class="small" href="#/accounts">All →</a></h3>${accountMini(d.accounts)}</div>
+    <div class="card"><h3>Upcoming (30 days)<span class="sp"></span><a class="small" href="#/scheduled">Scheduled →</a></h3>${upcomingList(d.upcoming || [])}</div>
+    <div class="card"><h3>Budgets<span class="sp"></span><a class="small" href="#/budgets">Manage →</a></h3>${d.budgets.length ? d.budgets.map(budgetRow).join('') : '<div class="empty">No budgets for this month</div>'}</div>
+    <div class="card"><h3>Recent activity<span class="sp"></span><a class="small" href="#/transactions">All →</a></h3>${txTable(d.recent, {compact: true})}</div>
   </div>`;
   bindTxRows(v);
   if (d.by_category.length) chart('cPie', {type: 'doughnut', data: {labels: d.by_category.map(x => x.name), datasets: [{data: d.by_category.map(x => x.amount), backgroundColor: PALETTE}]}, options: {plugins: {legend: {position: innerWidth < 760 ? 'bottom' : 'right'}}}});
-  chart('cTrend', {type: 'bar', data: {labels: d.trend.map(x => x.month.slice(2)), datasets: [{label: 'Income 收入', data: d.trend.map(x => x.income), backgroundColor: '#14a06f'}, {label: 'Expense 支出', data: d.trend.map(x => x.expense), backgroundColor: '#e8553e'}, {type: 'line', label: 'Investment income 投资收益', data: d.trend.map(x => x.investment_income || 0), borderColor: '#8a5cd6', backgroundColor: '#8a5cd6', pointRadius: 2, tension: .25}]}});
-  chart('cNW', {type: 'line', data: {labels: d.networth_history.map(x => x.month.slice(2)), datasets: [{label: 'Net worth 净资产', data: d.networth_history.map(x => x.net_worth), borderColor: '#3a7bd5', backgroundColor: 'rgba(58,123,213,.12)', fill: true, tension: .25}, {label: 'Liabilities 负债', data: d.networth_history.map(x => x.liabilities), borderColor: '#e0483a', borderDash: [4, 4], tension: .25}]}});
+  chart('cTrend', {type: 'bar', data: {labels: d.trend.map(x => x.month.slice(2)), datasets: [{label: 'Income', data: d.trend.map(x => x.income), backgroundColor: '#14a06f'}, {label: 'Expense', data: d.trend.map(x => x.expense), backgroundColor: '#e8553e'}, {type: 'line', label: 'Investment income', data: d.trend.map(x => x.investment_income || 0), borderColor: '#8a5cd6', backgroundColor: '#8a5cd6', pointRadius: 2, tension: .25}]}});
+  chart('cNW', {type: 'line', data: {labels: d.networth_history.map(x => x.month.slice(2)), datasets: [{label: 'Net worth', data: d.networth_history.map(x => x.net_worth), borderColor: '#3a7bd5', backgroundColor: 'rgba(58,123,213,.12)', fill: true, tension: .25}, {label: 'Liabilities', data: d.networth_history.map(x => x.liabilities), borderColor: '#e0483a', borderDash: [4, 4], tension: .25}]}});
 };
 function accountMini(accts) {
   if (!accts.length) return '<div class="empty">No accounts yet</div>';
@@ -48,13 +48,13 @@ function txAmount(t) {
 function txDesc(t) {
   let main = t.kind === 'transfer' ? `${esc(t.account_name || '?')} → ${esc(t.to_account_name || '?')}` :
     ['buy', 'sell', 'dividend'].includes(t.kind) ? `${esc(t.ticker || '')} ${t.shares ? num(t.shares, 6) + ' @ ' + num(t.price, 4) : ''}` :
-    t.kind === 'reimbursement' ? `Reimbursement 报销${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}` :
-    t.kind === 'adjustment' ? (t.adj_reason === 'opening' ? 'Opening balance 期初余额' : `${t.source === 'balance_set' ? '⚖️ Balance set 调整余额' : 'Balance adj. 余额调整'} · <span class="reason r-${esc(t.adj_reason || 'correction')}">${esc(t.adj_reason_label || 'Correction/other 校正/其他')}</span>`) :
-    esc(t.category_label || 'Uncategorized 未分类');
+    t.kind === 'reimbursement' ? `Reimbursement${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}` :
+    t.kind === 'adjustment' ? (t.adj_reason === 'opening' ? 'Opening balance' : `${t.source === 'balance_set' ? '⚖️ Balance set' : 'Balance adj.'} · <span class="reason r-${esc(t.adj_reason || 'correction')}">${esc(t.adj_reason_label || 'Correction/other')}</span>`) :
+    esc(t.category_label || 'Uncategorized');
   const bits = [t.merchant_name, t.member_name, t.project_name].filter(Boolean).map(esc);
   const tags = (t.tags || '').split(',').filter(Boolean).map(x => `<span class="pill">#${esc(x)}</span>`).join(' ');
   const demo = isDemoName(t.account_name) || /^\[DEMO\]/.test(t.note || '') ? '<span class="pill demo">DEMO</span> ' : '';
-  const rb = t.kind === 'expense' && t.reimbursable ? `<span class="pill reimb" title="Reimbursable 可报销 — not counted as an expense">${t.reimb_writeoff ? '已核销' : '可报销'}${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}</span> ` : t.kind === 'reimbursement' ? '<span class="pill reimb">报销到账</span> ' : '';
+  const rb = t.kind === 'expense' && t.reimbursable ? `<span class="pill reimb" title="Reimbursable — not counted as an expense">${t.reimb_writeoff ? '已核销' : '可报销'}${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}</span> ` : t.kind === 'reimbursement' ? '<span class="pill reimb">报销到账</span> ' : '';
   return `<div>${demo}${rb}<b>${main}</b> ${tags}</div><div class="small muted">${t.kind !== 'transfer' ? esc(t.account_name || '— no account —') + ' · ' : ''}${bits.join(' · ')}${t.note ? ' · ' + esc(t.note.slice(0, 80)) : ''}${t.attachment ? ' · 📎' : ''}</div>`;
 }
 function txTable(rows, {compact = false, select = false, tbodyId = ''} = {}) {
@@ -66,7 +66,7 @@ function txTable(rows, {compact = false, select = false, tbodyId = ''} = {}) {
 function txRowsHtml(rows, {compact = false, select = false} = {}) {
   return `${rows.map(t => `<tr data-tx="${t.id}" style="cursor:pointer">${select ? `<td class="hide-m" onclick="event.stopPropagation()"><input type="checkbox" class="sel" value="${t.id}"></td>` : ''}
    <td class="nowrap small hide-m">${esc(t.date.slice(0, compact ? 10 : 16))}</td><td class="hide-m"><span class="pill ${t.kind}">${kindLabel[t.kind] || t.kind}</span>${t.status === 'review' ? ' <span class="pill review">review</span>' : ''}</td>
-   <td>${t.reconciled_id ? '<span class="rec-badge" title="Reconciled 已对账 (on or before a reconciliation checkpoint)">✔🔒</span> ' : ''}${txDesc(t)}<div class="small muted" style="display:none" data-m>${esc(t.date.slice(0, 16))}</div></td>${compact ? '' : `<td class="small muted hide-m">${esc(srcLabel[t.source] || t.source)}</td>`}<td class="tx-amt">${txAmount(t)}</td></tr>`).join('')}`;
+   <td>${t.reconciled_id ? '<span class="rec-badge" title="Reconciled (on or before a reconciliation checkpoint)">✔🔒</span> ' : ''}${txDesc(t)}<div class="small muted" style="display:none" data-m>${esc(t.date.slice(0, 16))}</div></td>${compact ? '' : `<td class="small muted hide-m">${esc(srcLabel[t.source] || t.source)}</td>`}<td class="tx-amt">${txAmount(t)}</td></tr>`).join('')}`;
 }
 function bindTxRows(root, after) { $$('tr[data-tx]', root).forEach(tr => tr.onclick = () => openTx(+tr.dataset.tx, after)); }
 
@@ -76,20 +76,20 @@ VIEWS.transactions = async (v, rest) => {
   if (rest && rest[0]) { const p = new URLSearchParams(rest[0].replace(/^\?/, '')); S.txf = {limit: 100}; p.forEach((val, k) => S.txf[k] = val); }
   const f = S.txf; const m = S.meta;
   v.innerHTML = `${demoBanner()}<div class="card"><form id="flt" class="grid g4" style="gap:8px">
-    <input type="search" name="q" placeholder="Search 搜索 note / merchant / tag" value="${esc(f.q || '')}">
+    <input type="search" name="q" placeholder="Search note / merchant / tag" value="${esc(f.q || '')}">
     <input type="date" name="start" value="${esc(f.start || '')}" title="From"><input type="date" name="end" value="${esc(f.end || '')}" title="To">
-    <select name="kind"><option value="">All types 全部类型</option>${Object.entries(kindLabel).map(([k, l]) => `<option value="${k}" ${f.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
-    <select name="account_id">${acctOptions(f.account_id, {blank: 'All accounts 全部账户'})}</select>
-    <select name="category_id">${catOptions('', f.category_id).replace('— Category 分类 —', 'All categories 全部分类')}</select>
-    <select name="member_id">${listOptions(m.members, f.member_id, 'All members 成员')}</select>
-    <select name="merchant_id">${listOptions(m.merchants, f.merchant_id, 'All merchants 商家')}</select>
-    <select name="project_id">${listOptions(m.projects, f.project_id, 'All projects 项目')}</select>
-    <input name="tag" placeholder="Tag 标签" value="${esc(f.tag || '')}">
-    <select name="source"><option value="">Any source 来源</option>${['web', 'api', 'email', 'bot', 'message', 'import', 'balance_set', 'opening_balance', 'scheduled', 'reconcile'].map(s => `<option value="${s}" ${f.source === s ? 'selected' : ''}>${srcLabel[s] || s}</option>`).join('')}</select>
-    <select name="reconciled"><option value="">Reconciled or not 对账状态</option><option value="1" ${f.reconciled === '1' ? 'selected' : ''}>✔ Reconciled 已对账</option><option value="0" ${f.reconciled === '0' ? 'selected' : ''}>Not reconciled 未对账</option></select>
+    <select name="kind"><option value="">All types</option>${Object.entries(kindLabel).map(([k, l]) => `<option value="${k}" ${f.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <select name="account_id">${acctOptions(f.account_id, {blank: 'All accounts'})}</select>
+    <select name="category_id">${catOptions('', f.category_id).replace('— Category —', 'All categories')}</select>
+    <select name="member_id">${listOptions(m.members, f.member_id, 'All members')}</select>
+    <select name="merchant_id">${listOptions(m.merchants, f.merchant_id, 'All merchants')}</select>
+    <select name="project_id">${listOptions(m.projects, f.project_id, 'All projects')}</select>
+    <input name="tag" placeholder="Tag" value="${esc(f.tag || '')}">
+    <select name="source"><option value="">Any source</option>${['web', 'api', 'email', 'bot', 'message', 'import', 'balance_set', 'opening_balance', 'scheduled', 'reconcile'].map(s => `<option value="${s}" ${f.source === s ? 'selected' : ''}>${srcLabel[s] || s}</option>`).join('')}</select>
+    <select name="reconciled"><option value="">Reconciled or not</option><option value="1" ${f.reconciled === '1' ? 'selected' : ''}>✔ Reconciled</option><option value="0" ${f.reconciled === '0' ? 'selected' : ''}>Not reconciled</option></select>
     <div class="row"><button class="btn pri">Filter</button><button type="button" class="btn" id="fReset">Reset</button></div></form></div>
   <div class="card" style="margin-top:14px"><h3><span id="txCount"></span><span class="sp"></span>
-    <button class="btn sm" id="bulkPrj" disabled>📁 Assign project 归入项目</button> <button class="btn sm danger" id="bulkDel" disabled>Delete selected</button>
+    <button class="btn sm" id="bulkPrj" disabled>📁 Assign project</button> <button class="btn sm danger" id="bulkDel" disabled>Delete selected</button>
     <a class="btn sm" id="expCsv">⬇ Export CSV</a><a class="btn sm" href="#/settings/import">⬆ Import</a><button class="btn sm pri" onclick="openTx()">+ New</button></h3><div id="txList"></div>
     </div>`;
   const load = async () => {
@@ -100,15 +100,15 @@ VIEWS.transactions = async (v, rest) => {
     const old = $('#txList').nextElementSibling; if (old && old.classList.contains('inf-foot')) old.remove();
     (S.observers || []).forEach(o => o.disconnect()); S.observers = [];
     $('#txList').innerHTML = txTable([], {select: true, tbodyId: 'txBody'});
-    $('#txCount').textContent = 'Loading… 加载中';
+    $('#txCount').textContent = 'Loading…';
     const upd = () => { const n = !$$('.sel:checked').length; $('#bulkDel').disabled = n; $('#bulkPrj').disabled = n; };
     infiniteList($('#txList'), {
       load: cursor => api('/api/transactions?' + new URLSearchParams([...base, ['limit', '50'], ...(cursor ? [['before', cursor]] : [])])),
       append: (r, first) => {
         if (first) {
           const sm = r.summary || {};
-          $('#txCount').innerHTML = `${r.total} transactions 笔${r.total ? ` <span class="small muted">· income <b class="pos">${money(sm.income, sm.currency)}</b> · expense <b class="neg">${money(sm.expense, sm.currency)}</b></span>` : ''}`;
-          if (!r.items.length) { $('#txList').innerHTML = '<div class="empty">No transactions match 没有符合条件的流水</div>'; return; }
+          $('#txCount').innerHTML = `${r.total} transactions${r.total ? ` <span class="small muted">· income <b class="pos">${money(sm.income, sm.currency)}</b> · expense <b class="neg">${money(sm.expense, sm.currency)}</b></span>` : ''}`;
+          if (!r.items.length) { $('#txList').innerHTML = '<div class="empty">No transactions match</div>'; return; }
         }
         S.txRows = S.txRows.concat(r.items);
         $('#txBody').insertAdjacentHTML('beforeend', txRowsHtml(r.items, {select: true}));
@@ -157,47 +157,47 @@ async function openTx(id, after, preset = {}, opts = {}) {
   ${isReview ? `<div class="demo-banner" style="background:#fff8e6;border-color:#e4a11b;color:#7a5200">📥 Review item from <b>${esc(t.source)}</b> ${confPill(t.confidence)} — check the fields${unsure.size ? ' (highlighted ones especially)' : ''} and press <b>Approve</b>.${t.raw_text ? `<div class="small mono" style="white-space:pre-wrap;max-height:120px;overflow:auto;margin-top:4px">${esc(t.raw_text.slice(0, 1500))}</div>` : ''}</div>` : ''}
   ${opts.banner ? `<div class="demo-banner prefill-banner"><div>✎ ${opts.banner}${unsure.size ? ' <b>Highlighted fields</b> are guesses — please check them.' : ''}</div></div>` : ''}
   <form id="txForm" class="form" autocomplete="off">
-    ${SCH ? '' : `<div class="f full rc-row"><span>Receipt 小票</span><div class="rc-strip"><span id="rcThumbs">${rcThumbsHtml(opts.receipts)}</span><button type="button" class="btn sm" id="rcBtn" title="Take or choose a receipt photo; ${id ? 'it is attached to this transaction' : 'the form is filled from it'}">📷 ${id ? 'Add photo 添加照片' : 'Fill from photo 拍照识别'}</button></div></div>`}
-    <label class="f${U('amount')}"><span>Amount 金额</span><input name="amount" type="number" step="0.01" inputmode="decimal" enterkeyhint="done" value="${(t.orig_currency ? t.orig_amount : t.amount) ?? ''}" ${['buy', 'sell'].includes(t.kind) ? 'readonly' : ''}></label>
-    <label class="f${U('currency')}"><span>Currency 币种 <small class="muted" id="curHint"></small></span><select name="currency">${curOptions(t.orig_currency || t.currency || (acctById(t.account_id) || {}).currency || m.settings.base_currency)}</select></label>
-    <label class="f${U('account_id')}" data-show="!transfer"><span>Account 账户</span><select name="account_id">${acctOptions(t.account_id)}</select></label>
+    ${SCH ? '' : `<div class="f full rc-row"><span>Receipt</span><div class="rc-strip"><span id="rcThumbs">${rcThumbsHtml(opts.receipts)}</span><button type="button" class="btn sm" id="rcBtn" title="Take or choose a receipt photo; ${id ? 'it is attached to this transaction' : 'the form is filled from it'}">📷 ${id ? 'Add photo' : 'Fill from photo'}</button></div></div>`}
+    <label class="f${U('amount')}"><span>Amount</span><input name="amount" type="number" step="0.01" inputmode="decimal" enterkeyhint="done" value="${(t.orig_currency ? t.orig_amount : t.amount) ?? ''}" ${['buy', 'sell'].includes(t.kind) ? 'readonly' : ''}></label>
+    <label class="f${U('currency')}"><span>Currency <small class="muted" id="curHint"></small></span><select name="currency">${curOptions(t.orig_currency || t.currency || (acctById(t.account_id) || {}).currency || m.settings.base_currency)}</select></label>
+    <label class="f${U('account_id')}" data-show="!transfer"><span>Account</span><select name="account_id">${acctOptions(t.account_id)}</select></label>
     <div class="full transfer-box" data-show="transfer">
-      <label class="f${U('from_account_id')}"><span>From 转出账户</span><select name="from_account_id">${acctOptions(t.account_id)}</select></label>
+      <label class="f${U('from_account_id')}"><span>From</span><select name="from_account_id">${acctOptions(t.account_id)}</select></label>
       <div class="arrow" aria-hidden="true">→</div>
-      <label class="f${U('to_account_id')}"><span>To 转入账户</span><select name="to_account_id">${acctOptions(t.to_account_id)}</select></label>
-      <label class="f full" id="toAmtWrap"><span id="toAmtLbl">Amount received 转入金额</span><input name="to_amount" type="number" step="0.01" inputmode="decimal" value="${t.to_amount ?? ''}" placeholder="optional, converted with your rates if empty"></label>
+      <label class="f${U('to_account_id')}"><span>To</span><select name="to_account_id">${acctOptions(t.to_account_id)}</select></label>
+      <label class="f full" id="toAmtWrap"><span id="toAmtLbl">Amount received</span><input name="to_amount" type="number" step="0.01" inputmode="decimal" value="${t.to_amount ?? ''}" placeholder="optional, converted with your rates if empty"></label>
     </div>
-    <label class="f${U('category_id')}" data-show="expense income refund dividend"><span>Category 分类</span><select name="category_id"></select></label>
-    <label class="f" data-show="adjustment"><span>Reason for difference 差额原因</span><select name="adj_reason">${reasonOptions(t.adj_reason || (isNew ? defaultReason(acctById(t.account_id)) : 'correction'), {opening: true})}</select><span class="small muted" id="reasonWhy"></span></label>
-    <div class="full reimb-box" data-show="expense"><label class="chk"><input type="checkbox" name="reimbursable" ${t.reimbursable ? 'checked' : ''}> <b>可报销 Reimbursable</b> <span class="small muted">— not counted as an expense in reports; settle it in 报销中心</span></label>
+    <label class="f${U('category_id')}" data-show="expense income refund dividend"><span>Category</span><select name="category_id"></select></label>
+    <label class="f" data-show="adjustment"><span>Reason for difference</span><select name="adj_reason">${reasonOptions(t.adj_reason || (isNew ? defaultReason(acctById(t.account_id)) : 'correction'), {opening: true})}</select><span class="small muted" id="reasonWhy"></span></label>
+    <div class="full reimb-box" data-show="expense"><label class="chk"><input type="checkbox" name="reimbursable" ${t.reimbursable ? 'checked' : ''}> <b>Reimbursable</b> <span class="small muted">— not counted as an expense in reports; settle it in</span></label>
       <div class="reimb-fields form" ${t.reimbursable ? '' : 'hidden'}>
-        <label class="f"><span>Reimburse from 报销方 (company / person)</span><input name="reimb_payer" list="dlPayer" value="${esc(t.reimb_payer || '')}"></label>
-        <label class="f"><span>Expected amount 预计报销 <small class="muted">(default = amount)</small></span><input name="reimb_expected" type="number" step="0.01" inputmode="decimal" value="${t.reimb_expected ?? ''}"></label>
-        <label class="f full"><span>Reimbursement note 报销备注</span><input name="reimb_note" value="${esc(t.reimb_note || '')}"></label></div></div>
-    <div class="full small muted" data-show="reimbursement">💡 To settle reimbursable expenses (and link them), use <a href="#/reimb">报销中心 Reimbursements</a> → select → <b>Record reimbursement</b>. A receipt entered here is not income and isn't linked.</div>
-    <label class="f" id="prWrap" style="display:none"><span>Investment: counts as 计入</span><select name="pr_class">${[['', 'Auto 自动'], ['principal', 'Principal 本金投入'], ['returns', 'Returns 投资收益'], ['unexplained', 'Unexplained 未分类']].map(([v, l]) => `<option value="${v}" ${((t.pr_class === 'other' ? 'unexplained' : t.pr_class) || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">Only for investment accounts, e.g. mark a deposit as returns.</span></label>
-    <label class="f" data-show="buy sell dividend invest_fee"><span>Ticker 代码</span><input name="ticker" value="${esc(t.ticker || '')}" placeholder="AAPL, VTI, 600519.SS, BTC-USD"></label>
-    <label class="f" data-show="buy sell"><span>Shares 数量</span><input name="shares" type="number" step="any" inputmode="decimal" value="${t.shares ?? ''}"></label>
-    <label class="f" data-show="buy sell"><span>Price 价格</span><input name="price" type="number" step="any" inputmode="decimal" value="${t.price ?? ''}"></label>
-    <label class="f" data-show="buy sell"><span>Fee 手续费</span><input name="fee" type="number" step="any" inputmode="decimal" value="${t.fee ?? ''}"></label>
-    <label class="f${U('date')}" ${SCH ? 'style="display:none" data-show="none"' : ''}><span>Date & time 时间</span><input name="date" type="datetime-local" value="${esc((t.date || localDT()).replace(' ', 'T').slice(0, 16))}"></label>
-    <label class="f${U('merchant')}" data-show="expense income refund"><span>Merchant / payee 商家</span><input name="merchant" list="dlMerch" value="${esc(t.merchant_name || t.merchant || '')}"></label>
-    <label class="f${U('member_id')}" data-show="expense income refund transfer"><span>Member 成员</span><select name="member_id">${listOptions(m.members, t.member_id, '—')}</select></label>
-    <label class="f" data-show="expense income refund transfer"><span>Project 项目</span><select name="project_id">${listOptions(m.projects.filter(p => !p.archived || p.id == t.project_id), t.project_id, '—')}</select></label>
-    <label class="f"><span>Ledger 账本</span><select name="ledger_id">${m.ledgers.map(l => `<option value="${l.id}" ${l.id == t.ledger_id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></label>
-    <label class="f"><span>Tags 标签 (comma separated)</span><input name="tags" value="${esc(Array.isArray(t.tags) ? t.tags.join(',') : (t.tags || ''))}"></label>
-    <label class="f full"><span>Note 备注</span><textarea name="note" style="min-height:54px">${esc(t.note || '')}</textarea></label>
-    <label class="f full" ${SCH ? 'style="display:none" data-show="none"' : ''}><span>Attachment 附件 (receipt/photo)</span>${t.attachment ? `<span><a href="/api/transactions/${t.id}/attachment" target="_blank">📎 ${esc(t.attachment.split('_').slice(2).join('_'))}</a> <button type="button" class="btn sm danger" id="rmAtt">remove</button></span>` : ''}<input type="file" name="file" accept="image/*,application/pdf"></label>
+        <label class="f"><span>Reimburse from (company / person)</span><input name="reimb_payer" list="dlPayer" value="${esc(t.reimb_payer || '')}"></label>
+        <label class="f"><span>Expected amount <small class="muted">(default = amount)</small></span><input name="reimb_expected" type="number" step="0.01" inputmode="decimal" value="${t.reimb_expected ?? ''}"></label>
+        <label class="f full"><span>Reimbursement note</span><input name="reimb_note" value="${esc(t.reimb_note || '')}"></label></div></div>
+    <div class="full small muted" data-show="reimbursement">💡 To settle reimbursable expenses (and link them), use <a href="#/reimb">Reimbursements</a> → select → <b>Record reimbursement</b>. A receipt entered here is not income and isn't linked.</div>
+    <label class="f" id="prWrap" style="display:none"><span>Investment: counts as</span><select name="pr_class">${[['', 'Auto'], ['principal', 'Principal'], ['returns', 'Returns'], ['unexplained', 'Unexplained']].map(([v, l]) => `<option value="${v}" ${((t.pr_class === 'other' ? 'unexplained' : t.pr_class) || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">Only for investment accounts, e.g. mark a deposit as returns.</span></label>
+    <label class="f" data-show="buy sell dividend invest_fee"><span>Ticker</span><input name="ticker" value="${esc(t.ticker || '')}" placeholder="AAPL, VTI, 600519.SS, BTC-USD"></label>
+    <label class="f" data-show="buy sell"><span>Shares</span><input name="shares" type="number" step="any" inputmode="decimal" value="${t.shares ?? ''}"></label>
+    <label class="f" data-show="buy sell"><span>Price</span><input name="price" type="number" step="any" inputmode="decimal" value="${t.price ?? ''}"></label>
+    <label class="f" data-show="buy sell"><span>Fee</span><input name="fee" type="number" step="any" inputmode="decimal" value="${t.fee ?? ''}"></label>
+    <label class="f${U('date')}" ${SCH ? 'style="display:none" data-show="none"' : ''}><span>Date & time</span><input name="date" type="datetime-local" value="${esc((t.date || localDT()).replace(' ', 'T').slice(0, 16))}"></label>
+    <label class="f${U('merchant')}" data-show="expense income refund"><span>Merchant / payee</span><input name="merchant" list="dlMerch" value="${esc(t.merchant_name || t.merchant || '')}"></label>
+    <label class="f${U('member_id')}" data-show="expense income refund transfer"><span>Member</span><select name="member_id">${listOptions(m.members, t.member_id, '—')}</select></label>
+    <label class="f" data-show="expense income refund transfer"><span>Project</span><select name="project_id">${listOptions(m.projects.filter(p => !p.archived || p.id == t.project_id), t.project_id, '—')}</select></label>
+    <label class="f"><span>Ledger</span><select name="ledger_id">${m.ledgers.map(l => `<option value="${l.id}" ${l.id == t.ledger_id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></label>
+    <label class="f"><span>Tags (comma separated)</span><input name="tags" value="${esc(Array.isArray(t.tags) ? t.tags.join(',') : (t.tags || ''))}"></label>
+    <label class="f full"><span>Note</span><textarea name="note" style="min-height:54px">${esc(t.note || '')}</textarea></label>
+    <label class="f full" ${SCH ? 'style="display:none" data-show="none"' : ''}><span>Attachment (receipt/photo)</span>${t.attachment ? `<span><a href="/api/transactions/${t.id}/attachment" target="_blank">📎 ${esc(t.attachment.split('_').slice(2).join('_'))}</a> <button type="button" class="btn sm danger" id="rmAtt">remove</button></span>` : ''}<input type="file" name="file" accept="image/*,application/pdf"></label>
     <div class="full rec-warn" id="recWarn" style="display:none"></div>
     <datalist id="dlMerch">${m.merchants.map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>
     ${id ? `<div class="full small muted">#${t.id} · source ${esc(t.source)} · created ${esc(t.created_at)}${t.external_id ? ' · ext ' + esc(t.external_id.slice(0, 40)) : ''}</div>` : ''}
     ${isNew && !SCH ? '<div class="full small muted kbd-hint hide-m">Enter in Amount = Save · Ctrl/⌘+Enter = Save &amp; add another</div>' : ''}
     ${SCH ? schedFields(SCH) : ''}
   </form>`;
-  const buttons = `${id ? '<button class="btn danger" data-del>Delete</button><span class="sp"></span>' : ''}<button class="btn" data-cancel>Cancel</button>${isReview ? '<button class="btn" data-save>Save (keep in review)</button><button class="btn pri" data-approve>Approve ✓</button>' : isNew ? '<button class="btn" data-again>Save &amp; add another 保存并继续</button><button class="btn pri" data-save>Save</button>' : '<button class="btn pri" data-save>Save</button>'}`;
-  const sButtons = SCH ? `${SCH.id ? '<button class="btn danger" data-sdel>Delete schedule</button><span class="sp"></span>' : ''}<button class="btn" data-cancel>Cancel</button><button class="btn pri" data-ssave>Save schedule 保存</button>` : null;
+  const buttons = `${id ? '<button class="btn danger" data-del>Delete</button><span class="sp"></span>' : ''}<button class="btn" data-cancel>Cancel</button>${isReview ? '<button class="btn" data-save>Save (keep in review)</button><button class="btn pri" data-approve>Approve ✓</button>' : isNew ? '<button class="btn" data-again>Save &amp; add another</button><button class="btn pri" data-save>Save</button>' : '<button class="btn pri" data-save>Save</button>'}`;
+  const sButtons = SCH ? `${SCH.id ? '<button class="btn danger" data-sdel>Delete schedule</button><span class="sp"></span>' : ''}<button class="btn" data-cancel>Cancel</button><button class="btn pri" data-ssave>Save schedule</button>` : null;
   const tButtons = id && !isReview ? buttons.replace('<button class="btn" data-cancel>', '<button class="btn" data-recur title="Create a schedule from this transaction">🔁 Make recurring</button><button class="btn" data-cancel>') : buttons;
-  const bg = modal(SCH ? (SCH.id ? 'Edit schedule 编辑定时记账' : 'New schedule 新建定时记账') : id ? (isReview ? 'Review item 待确认' : 'Edit transaction 编辑') : 'New transaction 记一笔', html, {buttons: sButtons || tButtons, wide: false});
+  const bg = modal(SCH ? (SCH.id ? 'Edit schedule' : 'New schedule') : id ? (isReview ? 'Review item' : 'Edit transaction') : 'New transaction', html, {buttons: sButtons || tButtons, wide: false});
   const form = $('#txForm', bg);
   let kind = t.kind;
   const dirty = new Set(Object.keys(preset).filter(k => preset[k] !== null && preset[k] !== undefined && preset[k] !== ''));
@@ -206,7 +206,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
     const a = acctById(form.from_account_id.value), b = acctById(form.to_account_id.value);
     const differ = a && b && a.currency !== b.currency;
     $('#toAmtWrap', bg).style.display = differ ? '' : 'none';
-    if (differ) $('#toAmtLbl', bg).textContent = `Amount received 转入金额 (${curLabel(b.currency)})`;
+    if (differ) $('#toAmtLbl', bg).textContent = `Amount received (${curLabel(b.currency)})`;
   };
   const curHint = () => { const a = acctById(kind === 'transfer' ? form.from_account_id.value : form.account_id.value); $('#curHint', bg).textContent = a && form.currency.value !== a.currency ? `(converted into ${a.currency})` : ''; };
   const sync = () => {
@@ -310,7 +310,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
         for (const n of ['amount', 'merchant', 'note', 'tags', 'to_amount']) form[n].value = '';
         form.file.value = ''; opts.raw_text = null;
         $$('.unsure', bg).forEach(x => x.classList.remove('unsure')); const pb = $('.prefill-banner', bg); if (pb) pb.remove();
-        $('.modal header h2', bg).textContent = `New transaction 记一笔 · ${saved} saved 已保存`;
+        $('.modal header h2', bg).textContent = `New transaction · ${saved} saved`;
         form.amount.focus();
       } else { bg.close(); toast(approve ? 'Approved ✓' : 'Saved'); }
       if (res && res.reconcile_warning) toast('Saved — note: ' + res.reconcile_warning + '. Today\'s balance is unchanged; see the account\'s reconciliation history for drift.');

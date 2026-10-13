@@ -5,27 +5,27 @@ const treeState = () => { try { return JSON.parse(localStorage.getItem(TREE_KEY)
 const nodeKey = n => n.id === null || n.id === undefined ? 'ungrouped' : 'g' + n.id;
 function acctRow(a) {
   const zero = Math.abs(a.balance) < 0.005;
-  return `<div class="acct tree-child${zero ? ' zero' : ''}${a.archived ? ' archived' : ''}" data-aid="${a.id}" title="Open history 查看明细" data-zero="${zero ? 1 : 0}" data-arch="${a.archived ? 1 : 0}">
+  return `<div class="acct tree-child${zero ? ' zero' : ''}${a.archived ? ' archived' : ''}" data-aid="${a.id}" title="Open history" data-zero="${zero ? 1 : 0}" data-arch="${a.archived ? 1 : 0}">
       <div class="nm"><b>${isDemoName(a.name) ? '<span class="pill demo">DEMO</span> ' : ''}${esc(a.name)} ${a.last4 ? `<span class="muted small">••${esc(a.last4)}</span>` : ''}</b>
       <span class="small muted">${esc(a.type_label)} · ${a.currency}${a.aliases ? ' · aliases: ' + esc(a.aliases) : ''}${a.archived ? ' · archived' : ''}</span>
-      ${a.reconciled_at ? `<div class="small"><a class="rec-link" href="javascript:void 0" data-rhist="${a.id}" title="Reconciliation history 对账记录">✔ Reconciled 已对账 ${esc(a.reconciled_at.slice(0, 10))}${a.reconciliation_count > 1 ? ` · ${a.reconciliation_count}×` : ''}</a></div>` : ''}
-      ${a.type === 'credit_card' && a.credit_limit ? `<div class="small muted">Owed 欠款 ${money(a.owed, a.currency)} · Limit ${money(a.credit_limit, a.currency)} · Available ${money(a.available_credit, a.currency)}</div><div class="bar" style="max-width:260px"><i class="${a.owed / a.credit_limit > .8 ? 'over' : a.owed / a.credit_limit > .5 ? 'warn' : ''}" style="width:${Math.max(0, Math.min(100, a.owed / a.credit_limit * 100))}%"></i></div>` : ''}
+      ${a.reconciled_at ? `<div class="small"><a class="rec-link" href="javascript:void 0" data-rhist="${a.id}" title="Reconciliation history">✔ Reconciled ${esc(a.reconciled_at.slice(0, 10))}${a.reconciliation_count > 1 ? ` · ${a.reconciliation_count}×` : ''}</a></div>` : ''}
+      ${a.type === 'credit_card' && a.credit_limit ? `<div class="small muted">Owed ${money(a.owed, a.currency)} · Limit ${money(a.credit_limit, a.currency)} · Available ${money(a.available_credit, a.currency)}</div><div class="bar" style="max-width:260px"><i class="${a.owed / a.credit_limit > .8 ? 'over' : a.owed / a.credit_limit > .5 ? 'warn' : ''}" style="width:${Math.max(0, Math.min(100, a.owed / a.credit_limit * 100))}%"></i></div>` : ''}
       ${a.is_investment ? `<div class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</div>` : ''}
       </div>
-      <div class="bal ${a.is_liability ? (a.owed > 0 ? 'neg' : zero ? '' : 'pos') : a.balance < 0 ? 'neg' : ''}">${a.is_liability ? `<span class="small muted">${a.owed >= 0 ? 'owed 欠' : 'credit 溢缴'} </span>${money(Math.abs(a.owed), a.currency)}` : money(a.balance, a.currency)}${a.currency !== S.meta.settings.base_currency ? `<div class="small muted">${money(a.balance_base)}</div>` : ''}</div>
-      <div class="row acts" style="flex-wrap:nowrap"><a class="btn sm" href="#/account/${a.id}" title="Account history 账户明细">📜 <span class="hide-m">History 明细</span></a><button class="btn sm" data-adj="${a.id}" title="Enter the real balance; an adjustment transaction records the difference">⚖️ <span class="hide-m">Set balance 调整余额</span></button><button class="btn sm" data-rec="${a.id}" title="Compare with a statement and lock the balance at that date">✔ <span class="hide-m">Reconcile 对账</span></button><button class="btn sm" data-edit="${a.id}">Edit</button></div></div>`;
+      <div class="bal ${a.is_liability ? (a.owed > 0 ? 'neg' : zero ? '' : 'pos') : a.balance < 0 ? 'neg' : ''}">${a.is_liability ? `<span class="small muted">${a.owed >= 0 ? 'owed' : 'credit'} </span>${money(Math.abs(a.owed), a.currency)}` : money(a.balance, a.currency)}${a.currency !== S.meta.settings.base_currency ? `<div class="small muted">${money(a.balance_base)}</div>` : ''}</div>
+      <div class="row acts" style="flex-wrap:nowrap"><a class="btn sm" href="#/account/${a.id}" title="Account history">📜 <span class="hide-m">History</span></a><button class="btn sm" data-adj="${a.id}" title="Enter the real balance; an adjustment transaction records the difference">⚖️ <span class="hide-m">Set balance</span></button><button class="btn sm" data-rec="${a.id}" title="Compare with a statement and lock the balance at that date">✔ <span class="hide-m">Reconcile</span></button><button class="btn sm" data-edit="${a.id}">Edit</button></div></div>`;
 }
 /* principal / returns summary line (used by the Investments page; the Accounts tree no longer shows it) */
 function pctTxt(p) { return p === null || p === undefined ? '' : ` (${p >= 0 ? '+' : ''}${p.toFixed(1)}%)`; }
 function prLine(x) {
   const r = x.returns;
-  return `Principal 本金 ${money(x.principal, x.currency)} · Returns 收益 <span class="${r < 0 ? 'neg' : r > 0 ? 'pos' : ''}">${r >= 0 ? '+' : '−'}${money(Math.abs(r), x.currency)}${pctTxt(x.returns_pct)}</span>`
-    + (Math.abs(x.unexplained || 0) >= 0.01 ? ` · <span class="unexp-txt" title="Unclassified balance adjustments (reclassify them) + reconciliation differences">Unexplained 未分类 ${money(x.unexplained, x.currency)}</span>` : '');
+  return `Principal ${money(x.principal, x.currency)} · Returns <span class="${r < 0 ? 'neg' : r > 0 ? 'pos' : ''}">${r >= 0 ? '+' : '−'}${money(Math.abs(r), x.currency)}${pctTxt(x.returns_pct)}</span>`
+    + (Math.abs(x.unexplained || 0) >= 0.01 ? ` · <span class="unexp-txt" title="Unclassified balance adjustments (reclassify them) + reconciliation differences">Unexplained ${money(x.unexplained, x.currency)}</span>` : '');
 }
 function groupTotal(n) {
   const base = n.currency;
   const main = n.liability_group
-    ? `<span class="small muted">${n.owed_base >= 0 ? 'owed 欠' : 'credit 溢缴'} </span><span class="${n.owed_base > 0 ? 'neg' : ''}">${money(Math.abs(n.owed_base), base)}</span>`
+    ? `<span class="small muted">${n.owed_base >= 0 ? 'owed' : 'credit'} </span><span class="${n.owed_base > 0 ? 'neg' : ''}">${money(Math.abs(n.owed_base), base)}</span>`
     : `<span class="${n.total_base < 0 ? 'neg' : ''}">${money(n.total_base, base)}</span>`;
   const subs = n.by_currency.map(c => `${c.currency} ${num(n.liability_group ? -c.total : c.total)}${c.currency !== base ? ` ≈ ${money(n.liability_group ? -c.total_base : c.total_base, base)}` : ''}`);
   return `<div class="gt-main" title="${esc((n.liability_group ? 'Owed by currency: ' : 'By currency: ') + subs.join(' · '))}">${main}</div>${n.mixed_currency ? `<div class="small muted gt-sub">${esc(subs.join(' · '))}</div>` : ''}`;
@@ -50,14 +50,14 @@ VIEWS.accounts = async (v) => {
   const nw = d.net_worth;
   const byId = Object.fromEntries(d.accounts.map(a => [a.id, a]));
   v.innerHTML = `${demoBanner()}<div class="grid g3">
-   <div class="card stat"><div class="lbl">Assets 资产</div><div class="val pos">${money(nw.assets, nw.currency)}</div></div>
-   <div class="card stat"><div class="lbl">Liabilities 负债</div><div class="val neg">${money(nw.liabilities, nw.currency)}</div></div>
-   <div class="card stat hero"><div class="lbl">Net worth 净资产 = assets − liabilities</div><div class="val">${money(nw.net_worth, nw.currency)}</div></div></div>
-  <div class="card" style="margin-top:16px"><h3 class="tree-h">Accounts 账户<span class="sp"></span>
+   <div class="card stat"><div class="lbl">Assets</div><div class="val pos">${money(nw.assets, nw.currency)}</div></div>
+   <div class="card stat"><div class="lbl">Liabilities</div><div class="val neg">${money(nw.liabilities, nw.currency)}</div></div>
+   <div class="card stat hero"><div class="lbl">Net worth = assets − liabilities</div><div class="val">${money(nw.net_worth, nw.currency)}</div></div></div>
+  <div class="card" style="margin-top:16px"><h3 class="tree-h">Accounts<span class="sp"></span>
     <button class="btn sm" id="expAll">▾ Expand all</button><button class="btn sm" id="colAll">▸ Collapse all</button>
     <label class="chk small"><input type="checkbox" id="hideZero" ${localStorage.getItem(ZERO_KEY) === '1' ? 'checked' : ''}> hide zero balances</label>
     <label class="chk small"><input type="checkbox" id="showArch" ${localStorage.getItem(ARCH_KEY) === '1' ? 'checked' : ''}> show archived</label>
-    <button class="btn sm" id="grpBtn">Groups 分组</button><button class="btn sm pri" id="addAcct">+ Add account</button></h3>
+    <button class="btn sm" id="grpBtn">Groups</button><button class="btn sm pri" id="addAcct">+ Add account</button></h3>
   ${!d.accounts.length ? '<div class="empty">No accounts yet. Add your bank accounts, cards, e-wallets, brokerage accounts, loans…</div>' : ''}
   <div class="tree" id="acctTree">${(d.tree || []).map(n => treeNode(n, byId)).join('')}</div>
   <p class="small muted" style="margin-top:8px">Group totals are converted to ${esc(nw.currency)} with the rates in Settings → Currencies and add up to net worth. Accounts at 0 are dimmed.</p></div>`;
@@ -79,32 +79,32 @@ VIEWS.accounts = async (v) => {
 function acctForm(a) {
   const isNew = !a; a = a || {type: 'checking', currency: S.meta.settings.base_currency, opening_balance: 0};
   const liab = t => S.meta.account_types[t] && S.meta.account_types[t].liability;
-  const bg = modal(isNew ? 'Add account 新建账户' : 'Edit account 编辑账户', `<form class="form" id="af">
-   <label class="f full"><span>Name 名称</span><input name="name" required value="${esc(a.name || '')}" placeholder="e.g. Chase Sapphire, 招商银行储蓄卡, Alipay 支付宝"></label>
-   <label class="f"><span>Type 类型</span><select name="type">${typeOptions(a.type)}</select></label>
-   <label class="f"><span>Group 分组</span><select name="group_id"><option value="">(default for type)</option>${S.meta.groups.map(g => `<option value="${g.id}" ${g.id == a.group_id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>
-   <label class="f"><span>Currency 币种</span><select name="currency">${curOptions(a.currency)}</select></label>
-   ${isNew ? `<label class="f"><span id="obLbl">Opening balance 期初余额</span><input name="opening_balance" type="number" step="0.01" value="0"></label>
-   <label class="f"><span>Start date 开始日期 (opening balance is recorded on this day)</span><input name="start_date" type="date" value="${today()}"></label>`
-   : `<label class="f"><span>${liab(a.type) ? 'Amount owed now 当前欠款' : 'Current balance 当前余额'}</span><input name="balance" type="number" step="0.01" value="${liab(a.type) ? a.owed : a.balance}" data-orig="${liab(a.type) ? a.owed : a.balance}"><span class="small muted">Changing this records a balance-adjustment transaction for the difference (like 随手记 余额变更).${a.opening_balance ? ` Legacy opening balance field: ${money(a.opening_balance, a.currency)}.` : ''}</span></label>
-   <label class="f" id="brWrap" style="display:none"><span>Reason for difference 差额原因</span><select name="balance_reason">${reasonOptions(defaultReason(a))}</select></label>`}
-   <label class="f" data-inv><span>Prior returns in opening balance 期初中的历史收益</span><input name="opening_returns" type="number" step="0.01" value="${a.opening_returns ?? ''}" placeholder="0 = all principal"><span class="small muted">Part of the opening balance that was earlier gains, not money you put in. Default: all principal 本金.</span></label>
-   <label class="f" data-cc><span>Credit limit 信用额度</span><input name="credit_limit" type="number" step="0.01" value="${a.credit_limit ?? ''}"></label>
-   <label class="f" data-cc><span>Statement day 账单日 (1–31)</span><input name="stmt_day" type="number" min="1" max="31" value="${a.stmt_day ?? ''}" placeholder="blank = no reminders"></label>
-   <label class="f" data-cc><span>Due day 还款日 (day of month)</span><input name="due_day" type="number" min="1" max="31" value="${a.due_day ?? ''}"></label>
+  const bg = modal(isNew ? 'Add account' : 'Edit account', `<form class="form" id="af">
+   <label class="f full"><span>Name</span><input name="name" required value="${esc(a.name || '')}" placeholder="e.g. Chase Sapphire, 招商银行储蓄卡, Alipay 支付宝"></label>
+   <label class="f"><span>Type</span><select name="type">${typeOptions(a.type)}</select></label>
+   <label class="f"><span>Group</span><select name="group_id"><option value="">(default for type)</option>${S.meta.groups.map(g => `<option value="${g.id}" ${g.id == a.group_id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>
+   <label class="f"><span>Currency</span><select name="currency">${curOptions(a.currency)}</select></label>
+   ${isNew ? `<label class="f"><span id="obLbl">Opening balance</span><input name="opening_balance" type="number" step="0.01" value="0"></label>
+   <label class="f"><span>Start date (opening balance is recorded on this day)</span><input name="start_date" type="date" value="${today()}"></label>`
+   : `<label class="f"><span>${liab(a.type) ? 'Amount owed now' : 'Current balance'}</span><input name="balance" type="number" step="0.01" value="${liab(a.type) ? a.owed : a.balance}" data-orig="${liab(a.type) ? a.owed : a.balance}"><span class="small muted">Changing this records a balance-adjustment transaction for the difference (like 随手记 余额变更).${a.opening_balance ? ` Legacy opening balance field: ${money(a.opening_balance, a.currency)}.` : ''}</span></label>
+   <label class="f" id="brWrap" style="display:none"><span>Reason for difference</span><select name="balance_reason">${reasonOptions(defaultReason(a))}</select></label>`}
+   <label class="f" data-inv><span>Prior returns in opening balance</span><input name="opening_returns" type="number" step="0.01" value="${a.opening_returns ?? ''}" placeholder="0 = all principal"><span class="small muted">Part of the opening balance that was earlier gains, not money you put in. Default: all principal 本金.</span></label>
+   <label class="f" data-cc><span>Credit limit</span><input name="credit_limit" type="number" step="0.01" value="${a.credit_limit ?? ''}"></label>
+   <label class="f" data-cc><span>Statement day (1–31)</span><input name="stmt_day" type="number" min="1" max="31" value="${a.stmt_day ?? ''}" placeholder="blank = no reminders"></label>
+   <label class="f" data-cc><span>Due day (day of month)</span><input name="due_day" type="number" min="1" max="31" value="${a.due_day ?? ''}"></label>
    <label class="f" data-cc><span>…or due N days after statement 账单后N天</span><input name="due_after_days" type="number" min="1" max="60" value="${a.due_after_days ?? ''}"></label>
-   <label class="f" data-cc><span>Remind days before due 提前提醒天数</span><input name="remind_days" type="number" min="0" max="60" value="${a.remind_days ?? ''}" placeholder="default (Settings, 10)"></label>
-   <label class="f" data-cc><span>Minimum payment % 最低还款</span><input name="min_pay_pct" type="number" step="0.1" value="${a.min_pay_pct ?? ''}"></label>
-   <label class="f" data-cc><span>Autopay 自动还款</span><span><input type="checkbox" name="autopay" ${a.autopay ? 'checked' : ''}> on</span></label>
-   <label class="f"><span>Institution 机构</span><input name="institution" value="${esc(a.institution || '')}"></label>
-   <label class="f"><span>Last 4 digits 卡号后四位 (matches email alerts)</span><input name="last4" maxlength="5" value="${esc(a.last4 || '')}"></label>
-   <label class="f full"><span>Aliases 别名 (comma separated; used by quick-add, e.g. "sapphire, csp, 招行卡")</span><input name="aliases" value="${esc(a.aliases || '')}"></label>
-   <label class="f full"><span>Note 备注</span><input name="note" value="${esc(a.note || '')}"></label>
+   <label class="f" data-cc><span>Remind days before due</span><input name="remind_days" type="number" min="0" max="60" value="${a.remind_days ?? ''}" placeholder="default (Settings, 10)"></label>
+   <label class="f" data-cc><span>Minimum payment %</span><input name="min_pay_pct" type="number" step="0.1" value="${a.min_pay_pct ?? ''}"></label>
+   <label class="f" data-cc><span>Autopay</span><span><input type="checkbox" name="autopay" ${a.autopay ? 'checked' : ''}> on</span></label>
+   <label class="f"><span>Institution</span><input name="institution" value="${esc(a.institution || '')}"></label>
+   <label class="f"><span>Last 4 digits (matches email alerts)</span><input name="last4" maxlength="5" value="${esc(a.last4 || '')}"></label>
+   <label class="f full"><span>Aliases (comma separated; used by quick-add, e.g. "sapphire, csp, 招行卡")</span><input name="aliases" value="${esc(a.aliases || '')}"></label>
+   <label class="f full"><span>Note</span><input name="note" value="${esc(a.note || '')}"></label>
    ${isNew ? '' : `<label class="chk"><input type="checkbox" name="archived" ${a.archived ? 'checked' : ''}> Archived 隐藏</label>`}
    <label class="chk"><input type="checkbox" name="is_default" ${S.meta.settings.default_account_id == a.id && a.id ? 'checked' : ''}> Default account for quick-add</label>
   </form>`, {buttons: `${isNew ? '' : '<button class="btn danger" data-del>Delete</button><span class="sp"></span>'}<button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok>Save</button>`});
   const f = $('#af', bg);
-  const upd = () => { const l = liab(f.type.value); if ($('#obLbl', bg)) $('#obLbl', bg).textContent = l ? 'Amount owed at start 期初欠款' : 'Opening balance 期初余额'; $('[data-cc]', bg).style.display = f.type.value === 'credit_card' ? '' : 'none'; $('[data-inv]', bg).style.display = isInvType(f.type.value) ? '' : 'none'; };
+  const upd = () => { const l = liab(f.type.value); if ($('#obLbl', bg)) $('#obLbl', bg).textContent = l ? 'Amount owed at start' : 'Opening balance'; $('[data-cc]', bg).style.display = f.type.value === 'credit_card' ? '' : 'none'; $('[data-inv]', bg).style.display = isInvType(f.type.value) ? '' : 'none'; };
   f.type.onchange = upd; upd();
   if (f.balance) f.balance.oninput = () => { $('#brWrap', bg).style.display = f.balance.value !== '' && +f.balance.value !== +f.balance.dataset.orig ? '' : 'none'; };
   $('[data-x2]', bg).onclick = bg.close;
@@ -130,11 +130,11 @@ function acctForm(a) {
 function adjustForm(a) {
   const owed = !!a.is_liability;
   const cur = owed ? a.owed : a.balance;
-  const bg = modal('Set balance 调整余额 — ' + esc(a.name), `<p class="muted">The app currently computes ${owed ? 'an amount owed' : 'a balance'} of <b>${money(cur, a.currency)}</b>. Enter the real ${owed ? 'amount owed 欠款 (positive number)' : 'balance'}; a <b>balance adjustment</b> transaction records the difference. It changes balances and net worth but is not income or expense.</p>
-   <form class="form" id="adf"><label class="f"><span>${owed ? 'Actual amount owed 实际欠款' : 'Actual balance 实际余额'}</span><input name="target" type="number" step="0.01" required autofocus></label>
-   <label class="f"><span>As of 日期时间</span><input name="date" type="datetime-local" value="${nowLocal()}"></label>
-   <label class="f full"><span>Reason for difference 差额原因</span><select name="reason">${reasonOptions(defaultReason(a))}</select><span class="small muted" id="adWhy"></span></label>
-   <label class="f full"><span>Note 备注 (optional)</span><input name="note" placeholder="e.g. matched bank app"></label>
+  const bg = modal('Set balance — ' + esc(a.name), `<p class="muted">The app currently computes ${owed ? 'an amount owed' : 'a balance'} of <b>${money(cur, a.currency)}</b>. Enter the real ${owed ? 'amount owed (positive number)' : 'balance'}; a <b>balance adjustment</b> transaction records the difference. It changes balances and net worth but is not income or expense.</p>
+   <form class="form" id="adf"><label class="f"><span>${owed ? 'Actual amount owed' : 'Actual balance'}</span><input name="target" type="number" step="0.01" required autofocus></label>
+   <label class="f"><span>As of</span><input name="date" type="datetime-local" value="${nowLocal()}"></label>
+   <label class="f full"><span>Reason for difference</span><select name="reason">${reasonOptions(defaultReason(a))}</select><span class="small muted" id="adWhy"></span></label>
+   <label class="f full"><span>Note (optional)</span><input name="note" placeholder="e.g. matched bank app"></label>
    <label class="chk full"><input type="checkbox" name="reconcile"> Also mark as reconciled 同时标记为已对账 <span class="small muted">(locks the balance at this date: later edits to older transactions won't change it)</span></label>
    <div class="full small" id="adPrev"></div></form>`,
    {buttons: '<button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok>Set balance</button>'});
@@ -153,12 +153,12 @@ function adjustForm(a) {
 /* ---------- reconciliation 对账 ---------- */
 function reconcileDialog(a) {
   const owed = !!a.is_liability, cur = a.currency;
-  const bg = modal('Reconcile 对账 — ' + esc(a.name), `<form class="form" id="rcf">
-   <label class="f"><span>${owed ? 'Statement amount owed 账单欠款' : 'Statement balance 对账单余额'}</span><input name="balance" type="number" step="0.01" inputmode="decimal" required autofocus></label>
-   <label class="f"><span>Statement date 对账日期</span><input name="as_of" type="date" value="${today()}"></label>
-   <label class="f full"><span>Note 备注 (optional)</span><input name="note" placeholder="e.g. September statement"></label></form>
+  const bg = modal('Reconcile — ' + esc(a.name), `<form class="form" id="rcf">
+   <label class="f"><span>${owed ? 'Statement amount owed' : 'Statement balance'}</span><input name="balance" type="number" step="0.01" inputmode="decimal" required autofocus></label>
+   <label class="f"><span>Statement date</span><input name="as_of" type="date" value="${today()}"></label>
+   <label class="f full"><span>Note (optional)</span><input name="note" placeholder="e.g. September statement"></label></form>
    <div id="rcSum" class="rec-sum"></div><div id="rcList"></div>`, {wide: true,
-    buttons: '<button class="btn" data-hist>History 记录</button><span class="sp"></span><button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok disabled>Finalize 完成对账</button>'});
+    buttons: '<button class="btn" data-hist>History</button><span class="sp"></span><button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok disabled>Finalize</button>'});
   const f = $('#rcf', bg); let P = null, seq = 0;
   const cleared = new Set();
   const sign = owed ? -1 : 1;
@@ -168,10 +168,10 @@ function reconcileDialog(a) {
     const clearedSum = P.transactions.filter(t => cleared.has(t.id)).reduce((s, t) => s + t.effect, 0);
     const hasSt = P.statement !== undefined, d = hasSt ? P.difference_shown : null, zero = hasSt && Math.abs(d) < 0.005;
     $('#rcSum', bg).innerHTML = `<div class="grid g4 rec-stats">
-      <div><div class="lbl">${P.previous ? `Previous checkpoint ${esc(P.previous.as_of.slice(0, 10))}` : 'No previous checkpoint 首次对账'}</div><div class="v">${P.previous ? money(prevBal * sign, cur) : '—'}</div></div>
-      <div><div class="lbl">Computed by the app 账面余额</div><div class="v">${money(P.computed, cur)}</div><div class="small muted">${P.transactions.length} transaction${P.transactions.length === 1 ? '' : 's'} since${P.previous ? ' the last checkpoint' : ' the start'}</div></div>
-      <div><div class="lbl">Statement 对账单</div><div class="v">${hasSt ? money(P.statement, cur) : '<span class="muted">enter above</span>'}</div><div class="small muted">Cleared ✔ ${cleared.size} · ${money(clearedSum * sign, cur)}</div></div>
-      <div><div class="lbl">Difference 差额</div><div class="v ${!hasSt ? '' : zero ? 'pos' : 'neg'}">${hasSt ? (zero ? '0.00 ✓' : (d > 0 ? '+' : '') + num(d)) : '—'}</div></div></div>
+      <div><div class="lbl">${P.previous ? `Previous checkpoint ${esc(P.previous.as_of.slice(0, 10))}` : 'No previous checkpoint'}</div><div class="v">${P.previous ? money(prevBal * sign, cur) : '—'}</div></div>
+      <div><div class="lbl">Computed by the app</div><div class="v">${money(P.computed, cur)}</div><div class="small muted">${P.transactions.length} transaction${P.transactions.length === 1 ? '' : 's'} since${P.previous ? ' the last checkpoint' : ' the start'}</div></div>
+      <div><div class="lbl">Statement</div><div class="v">${hasSt ? money(P.statement, cur) : '<span class="muted">enter above</span>'}</div><div class="small muted">Cleared ✔ ${cleared.size} · ${money(clearedSum * sign, cur)}</div></div>
+      <div><div class="lbl">Difference</div><div class="v ${!hasSt ? '' : zero ? 'pos' : 'neg'}">${hasSt ? (zero ? '0.00 ✓' : (d > 0 ? '+' : '') + num(d)) : '—'}</div></div></div>
       ${P.added_before_previous ? `<div class="rec-warn">⚠ ${P.added_before_previous} transaction(s) dated before the previous checkpoint were added later; they don't count toward the balance (see History → drift).</div>` : ''}
       ${hasSt && !zero ? `<div class="rec-diff"><b>The statement and the app differ by ${num(Math.abs(d))} ${esc(cur)}.</b> Look for missing or duplicate transactions below, or:
         <label class="chk"><input type="radio" name="rcMode" value="adjust" checked> Record the difference as a balance adjustment 记为余额调整, reason <select id="rcReason">${reasonOptions(defaultReason(a))}</select></label>
@@ -184,7 +184,7 @@ function reconcileDialog(a) {
       <div class="row small" style="margin:8px 0"><b>Transactions since ${P.previous ? 'the previous checkpoint' : 'the start'} 待核对</b><span class="sp"></span>
       <button type="button" class="btn sm" id="rcAll">Check all ✔</button><button type="button" class="btn sm" id="rcNone">Clear</button></div>
       ${tx.length > shown.length ? `<div class="small muted">Showing the latest ${shown.length} of ${tx.length}; earlier ones are included in the computed balance.</div>` : ''}
-      <div class="scroll-x rec-list"><table class="t"><thead><tr><th>Cleared 已核对</th><th>Date</th><th>Details</th><th class="right">Effect</th><th class="right">Running</th></tr></thead><tbody>
+      <div class="scroll-x rec-list"><table class="t"><thead><tr><th>Cleared</th><th>Date</th><th>Details</th><th class="right">Effect</th><th class="right">Running</th></tr></thead><tbody>
       ${(() => { let run = P.computed_signed - tx.reduce((s, t) => s + t.effect, 0) + tx.slice(0, tx.length - shown.length).reduce((s, t) => s + t.effect, 0);
         return shown.map(t => { run += t.effect; return `<tr><td><input type="checkbox" class="rcc" value="${t.id}" ${cleared.has(t.id) ? 'checked' : ''}></td><td class="nowrap small">${esc(t.date.slice(0, 16))}</td>
           <td><span class="pill ${t.kind}">${kindLabel[t.kind] || t.kind}</span> ${esc(t.label)}${t.kind === 'transfer' && t.other_account ? ` <span class="small muted">↔ ${esc(t.other_account)}</span>` : ''}${t.note && t.note !== t.label ? `<div class="small muted">${esc(t.note)}</div>` : ''}</td>
@@ -218,14 +218,14 @@ async function reconcileHistory(a) {
   const d = await guard(() => api(`/api/accounts/${a.id}/reconciliations`));
   const items = d.items, cur = a.currency;
   const sgn = v => Math.abs(v) < 0.005 ? '<span class="muted">0.00</span>' : `<b class="neg">${v > 0 ? '+' : ''}${num(v)}</b>`;
-  const bg = modal('Reconciliation history 对账记录 — ' + esc(a.name), !items.length ? '<div class="empty">Not reconciled yet. Use ✔ Reconcile on the Accounts page.</div>' : `
+  const bg = modal('Reconciliation history — ' + esc(a.name), !items.length ? '<div class="empty">Not reconciled yet. Use ✔ Reconcile on the Accounts page.</div>' : `
     <p class="small muted">Today's balance is anchored to the latest checkpoint plus the transactions after it. <b>Drift</b> = what the transactions now add up to (from the previous checkpoint) minus the statement balance; non-zero means a transaction in that period was added, edited or deleted after reconciling (or a difference was accepted). <b>Changed since</b> = change caused by later edits.</p>
-    <div class="scroll-x"><table class="t"><thead><tr><th>Statement date</th><th class="right">${a.is_liability ? 'Owed 欠款' : 'Balance 余额'}</th><th class="right">Drift 偏差</th><th class="right">Changed since 之后改动</th><th class="right">Cleared 已核对</th><th>Note</th><th></th></tr></thead><tbody>
+    <div class="scroll-x"><table class="t"><thead><tr><th>Statement date</th><th class="right">${a.is_liability ? 'Owed' : 'Balance'}</th><th class="right">Drift</th><th class="right">Changed since</th><th class="right">Cleared</th><th>Note</th><th></th></tr></thead><tbody>
     ${items.map(c => `<tr><td class="nowrap">✔ ${esc(c.as_of.slice(0, 10))}<div class="small muted">made ${esc((c.created_at || '').slice(0, 16).replace('T', ' '))}</div></td>
       <td class="right">${money(c.balance_shown, cur)}</td><td class="right">${sgn(c.drift)}</td><td class="right">${sgn(c.history_changed)}</td>
       <td class="right small">${c.cleared_count} / ${c.tx_count}</td>
       <td class="small">${esc(c.note || '')}${c.adjustment_tx_id ? ` <a href="javascript:void 0" data-otx="${c.adjustment_tx_id}">adjustment #${c.adjustment_tx_id}</a>` : ''}</td>
-      <td>${c.is_latest ? '<button class="btn sm danger" data-undo>Undo 撤销</button>' : ''}</td></tr>`).join('')}</tbody></table></div>`,
+      <td>${c.is_latest ? '<button class="btn sm danger" data-undo>Undo</button>' : ''}</td></tr>`).join('')}</tbody></table></div>`,
     {wide: true, buttons: `<a class="btn" href="#/transactions/?account_id=${a.id}&reconciled=1">🧾 Reconciled transactions</a><span class="sp"></span><button class="btn" data-x2>Close</button><button class="btn pri" data-new>✔ Reconcile again</button>`});
   $('[data-x2]', bg).onclick = bg.close;
   $('[data-new]', bg).onclick = () => { bg.close(); reconcileDialog(a); };
@@ -240,7 +240,7 @@ async function reconcileHistory(a) {
   };
 }
 function groupsEditor(groups) {
-  const bg = modal('Account groups 账户分组', `<div id="gl">${groups.map(g => `<div class="row" style="margin-bottom:6px"><input value="${esc(g.name)}" data-g="${g.id}"><input type="number" value="${g.sort}" data-s="${g.id}" style="width:70px"><button class="btn sm danger" data-dg="${g.id}">✕</button></div>`).join('')}</div>
+  const bg = modal('Account groups', `<div id="gl">${groups.map(g => `<div class="row" style="margin-bottom:6px"><input value="${esc(g.name)}" data-g="${g.id}"><input type="number" value="${g.sort}" data-s="${g.id}" style="width:70px"><button class="btn sm danger" data-dg="${g.id}">✕</button></div>`).join('')}</div>
    <div class="row"><input id="ng" placeholder="New group name"><button class="btn" id="ag">Add</button></div>`, {buttons: '<button class="btn pri" data-ok>Save</button>'});
   $('#ag', bg).onclick = async () => { if (!$('#ng', bg).value) return; await guard(() => api('/api/account-groups', {method: 'POST', body: {name: $('#ng', bg).value}})); bg.close(); await refresh(); };
   $$('[data-dg]', bg).forEach(b => b.onclick = async () => { await guard(() => api('/api/account-groups/' + b.dataset.dg, {method: 'DELETE'})); b.parentElement.remove(); });
@@ -255,19 +255,19 @@ VIEWS.investments = async (v, rest = []) => {
   const d = await api('/api/investments');
   const totMV = d.holdings.reduce((s, h) => s + h.market_value, 0), totCost = d.holdings.reduce((s, h) => s + h.cost, 0);
   v.innerHTML = `${demoBanner()}<div class="grid g3">
-   <div class="card stat"><div class="lbl">Market value 市值</div><div class="val">${money(totMV)}</div></div>
-   <div class="card stat"><div class="lbl">Cost basis 成本</div><div class="val">${money(totCost)}</div></div>
-   <div class="card stat"><div class="lbl">Unrealized P/L 浮动盈亏</div><div class="val ${totMV - totCost >= 0 ? 'pos' : 'neg'}">${money(totMV - totCost)}</div></div></div>
+   <div class="card stat"><div class="lbl">Market value</div><div class="val">${money(totMV)}</div></div>
+   <div class="card stat"><div class="lbl">Cost basis</div><div class="val">${money(totCost)}</div></div>
+   <div class="card stat"><div class="lbl">Unrealized P/L</div><div class="val ${totMV - totCost >= 0 ? 'pos' : 'neg'}">${money(totMV - totCost)}</div></div></div>
   <div class="card" style="margin-top:16px" id="prCard"></div>
   <div class="card" style="margin-top:16px" id="retCard"></div>
-  <div class="card" style="margin-top:16px"><h3>Holdings 持仓<span class="sp"></span><button class="btn sm" id="refresh">↻ Refresh quotes (Yahoo)</button><button class="btn sm" id="manual">Set price manually</button><button class="btn sm pri" id="trade">+ Record trade</button></h3>
+  <div class="card" style="margin-top:16px"><h3>Holdings<span class="sp"></span><button class="btn sm" id="refresh">↻ Refresh quotes (Yahoo)</button><button class="btn sm" id="manual">Set price manually</button><button class="btn sm pri" id="trade">+ Record trade</button></h3>
   ${!d.accounts.length ? '<div class="empty">Add a Brokerage / Retirement / Crypto account first (Accounts → Add account).</div>' : ''}
   ${d.holdings.length ? `<div class="scroll-x"><table class="t"><thead><tr><th>Account</th><th>Ticker</th><th class="right">Shares</th><th class="right">Avg cost</th><th class="right">Price</th><th class="right">Market value</th><th class="right">Cost</th><th class="right">Unrealized</th><th class="right">Dividends</th><th class="right">Realized</th></tr></thead><tbody>
    ${d.holdings.map(h => `<tr><td class="small">${esc(h.account_name)}</td><td><b>${esc(h.ticker)}</b></td><td class="right">${num(h.shares, 6)}</td><td class="right">${num(h.avg_cost, 4)}</td>
    <td class="right" title="${esc(h.price_source)}">${num(h.price, 4)}<div class="small muted">${esc((h.price_source || '').split(' @ ')[0])}</div></td><td class="right"><b>${money(h.market_value)}</b></td><td class="right">${money(h.cost)}</td>
    <td class="right ${h.unrealized >= 0 ? 'pos' : 'neg'}">${money(h.unrealized)} (${h.unrealized_pct}%)</td><td class="right">${money(h.dividends)}</td><td class="right">${money(h.realized)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No holdings yet</div>'}</div>
   <div class="grid g2" style="margin-top:16px"><div class="card"><h3>Investment accounts</h3>${d.accounts.map(a => `<div class="acct"><div class="nm"><b>${esc(a.name)}</b><span class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</span></div><div class="bal">${money(a.balance, a.currency)}</div></div>`).join('') || '<div class="empty">None</div>'}</div>
-  <div class="card"><h3>Recent trades 交易记录</h3>${txTable(d.trades.slice(0, 20), {compact: true})}</div></div>`;
+  <div class="card"><h3>Recent trades</h3>${txTable(d.trades.slice(0, 20), {compact: true})}</div></div>`;
   bindTxRows(v);
   Promise.all([renderPR(), renderReturns()]).then(() => {  // coming back from an account: restore scroll position
     const y = S.invPR && S.invPR.scroll; if (y && location.hash.replace(/\/$/, '') === '#/investments') { window.scrollTo(0, y); S.invPR.scroll = 0; }
@@ -281,9 +281,9 @@ VIEWS.investments = async (v, rest = []) => {
 
 /* ---------- investment returns 投资收益 ---------- */
 const RET_TIPS = {
-  gain: 'Gain = returns 投资收益, same as the account pages: Investment gain/loss and Interest adjustments, dividends, fees and market gains on tracked holdings. Unclassified adjustments are NOT gain; they are in Unexplained.',
-  unexp: 'Unexplained 未分类 = unclassified balance adjustments (e.g. imported 余额变更; reclassify them) + reconciliation gaps. End value − start value = net contributions + gain + unexplained.',
-  contrib: 'Principal 本金 put in: transfers in, income recorded on the account, and adjustments classified Opening/Unrecorded (same as the account pages).',
+  gain: 'Gain = returns, same as the account pages: Investment gain/loss and Interest adjustments, dividends, fees and market gains on tracked holdings. Unclassified adjustments are NOT gain; they are in Unexplained.',
+  unexp: 'Unexplained = unclassified balance adjustments (e.g. imported balance changes; reclassify them) + reconciliation gaps. End value − start value = net contributions + gain + unexplained.',
+  contrib: 'Principal put in: transfers in, income recorded on the account, and adjustments classified Opening/Unrecorded (same as the account pages).',
   withdraw: 'Money taken out: transfers out to non-investment accounts (for a group: outside the group) and expenses paid from the account.',
   simple: 'Simple return = gain ÷ (start value + net contributions). Easy to read but ignores WHEN money was added.',
   md: 'Money-weighted return (Modified Dietz) = gain ÷ (start value + Σ contribution × share of the period it was invested). Money added late in the period counts less. Not annualized.',
@@ -295,7 +295,7 @@ async function renderReturns() {
   const r = S.ret;
   const qs = new URLSearchParams({period: r.period, scope: r.scope, ...(r.period === 'custom' ? {start: r.start, end: r.end || today()} : {})});
   let d;
-  try { d = await api('/api/investments/returns?' + qs); } catch (e) { el.innerHTML = `<h3>Investment returns 投资收益</h3><div class="neg">${esc(e.message)}</div>`; return; }
+  try { d = await api('/api/investments/returns?' + qs); } catch (e) { el.innerHTML = `<h3>Investment returns</h3><div class="neg">${esc(e.message)}</div>`; return; }
   const cur = d.currency;
   const ordered = [];
   const total = d.rows.find(x => x.level === 'total');
@@ -309,10 +309,10 @@ async function renderReturns() {
     <td class="right">${pctCell(x.simple_return)}</td><td class="right">${pctCell(x.md_return)}</td>
     <td class="right">${x.days > 365 ? pctCell(x.annualized) + (x.xirr !== null ? `<div class="small muted">XIRR ${pctCell(x.xirr, false)}</div>` : '') : r.period === 'all' && x.xirr !== null ? `<span class="small muted">XIRR</span> ${pctCell(x.xirr)}` : '<span class="muted">—</span>'}</td></tr>`;
   const comp = total ? total.components : {};
-  el.innerHTML = `<h3>Investment returns 投资收益<span class="sp"></span>
-    <select id="retP" style="width:auto">${[['month', 'This month 本月'], ['ytd', 'Year to date 今年'], ['1y', 'Last 12 months 近一年'], ['all', 'All time 全部'], ['custom', 'Custom 自定义']].map(([k, l]) => `<option value="${k}" ${r.period === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+  el.innerHTML = `<h3>Investment returns<span class="sp"></span>
+    <select id="retP" style="width:auto">${[['month', 'This month'], ['ytd', 'Year to date'], ['1y', 'Last 12 months'], ['all', 'All time'], ['custom', 'Custom']].map(([k, l]) => `<option value="${k}" ${r.period === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <span id="retCustom" style="display:${r.period === 'custom' ? 'inline-flex' : 'none'};gap:4px"><input type="date" id="retS" value="${r.start || d.period.start}" style="width:auto"><input type="date" id="retE" value="${r.end || d.period.end}" style="width:auto"><button class="btn sm" id="retGo">Go</button></span>
-    <button class="btn sm" id="reclass" title="One-time tool: classify imported 余额变更 adjustments on investment accounts">🏷 Reclassify adjustments…</button></h3>
+    <button class="btn sm" id="reclass" title="One-time tool: classify imported balance-change adjustments on investment accounts">🏷 Reclassify adjustments…</button></h3>
    <div class="small muted" style="margin:-4px 0 10px">${esc(d.period.start)} → ${esc(d.period.end)} (${d.period.days} days) · values in ${esc(cur)} · investment-type accounts (brokerage, retirement, crypto). Transfers between them are not contributions in group/total rows.</div>
    ${!d.rows.length || !total || !total.account_ids.length ? '<div class="empty">No investment-type accounts yet (Brokerage / Retirement / Crypto).</div>' : `
    <div class="grid g4 ret-stats">
@@ -321,11 +321,11 @@ async function renderReturns() {
      <div class="stat"><div class="lbl" title="${RET_TIPS.simple}">Simple return 简单收益率 ⓘ</div><div class="val">${pctCell(total.simple_return)}</div></div>
      <div class="stat"><div class="lbl" title="${RET_TIPS.md}">Money-weighted 资金加权 ⓘ</div><div class="val">${pctCell(total.md_return)}</div><div class="small muted" title="${RET_TIPS.ann}">${total.days > 365 ? `annualized ${pctCell(total.annualized, false)} · ` : ''}${total.xirr !== null ? `XIRR ${pctCell(total.xirr, false)}/yr` : ''}</div></div>
    </div>
-   <div class="scroll-x" style="margin-top:12px"><table class="t ret-table"><thead><tr><th>Account / group</th><th class="right">Start value 期初</th><th class="right" title="${RET_TIPS.contrib}">Contributions 投入 ⓘ</th><th class="right" title="${RET_TIPS.withdraw}">Withdrawals 取出 ⓘ</th><th class="right">End value 期末</th><th class="right" title="${RET_TIPS.gain}">Gain 收益 ⓘ</th><th class="right" title="${RET_TIPS.unexp}">Unexplained 未分类 ⓘ</th><th class="right" title="${RET_TIPS.simple}">Simple ⓘ</th><th class="right" title="${RET_TIPS.md}">Money-wtd ⓘ</th><th class="right" title="${RET_TIPS.ann}">Annualized ⓘ</th></tr></thead>
+   <div class="scroll-x" style="margin-top:12px"><table class="t ret-table"><thead><tr><th>Account / group</th><th class="right">Start value</th><th class="right" title="${RET_TIPS.contrib}">Contributions 投入 ⓘ</th><th class="right" title="${RET_TIPS.withdraw}">Withdrawals 取出 ⓘ</th><th class="right">End value</th><th class="right" title="${RET_TIPS.gain}">Gain 收益 ⓘ</th><th class="right" title="${RET_TIPS.unexp}">Unexplained 未分类 ⓘ</th><th class="right" title="${RET_TIPS.simple}">Simple ⓘ</th><th class="right" title="${RET_TIPS.md}">Money-wtd ⓘ</th><th class="right" title="${RET_TIPS.ann}">Annualized ⓘ</th></tr></thead>
    <tbody>${total ? row(total) : ''}${ordered.map(row).join('')}</tbody></table></div>
    <div class="grid g2" style="margin-top:14px">
-     <div><h4 style="margin:0 0 6px">Cumulative gain 累计收益 · ${esc(d.scope.name)}</h4><div class="chart-box" style="height:260px"><canvas id="retChart"></canvas></div></div>
-     <div><h4 style="margin:0 0 6px">Returns by year 年度收益 · ${esc(d.scope.name)}</h4>${d.scope.years.length ? `<div class="scroll-x"><table class="t"><thead><tr><th>Year</th><th class="right">Start</th><th class="right">Net in</th><th class="right">Gain</th><th class="right" title="${RET_TIPS.md}">Money-wtd</th><th class="right" title="${RET_TIPS.simple}">Simple</th></tr></thead><tbody>${d.scope.years.slice().reverse().map(y => `<tr><td>${y.year}${y.end.slice(5) !== '12-31' ? ' <span class="small muted">to ' + y.end.slice(5) + '</span>' : ''}</td><td class="right">${money(y.start_value, cur)}</td><td class="right">${money(y.net_contributions, cur)}</td><td class="right ${y.gain >= 0 ? 'pos' : 'neg'}">${money(y.gain, cur)}</td><td class="right">${pctCell(y.md_return)}</td><td class="right">${pctCell(y.simple_return)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No data</div>'}</div>
+     <div><h4 style="margin:0 0 6px">Cumulative gain · ${esc(d.scope.name)}</h4><div class="chart-box" style="height:260px"><canvas id="retChart"></canvas></div></div>
+     <div><h4 style="margin:0 0 6px">Returns by year · ${esc(d.scope.name)}</h4>${d.scope.years.length ? `<div class="scroll-x"><table class="t"><thead><tr><th>Year</th><th class="right">Start</th><th class="right">Net in</th><th class="right">Gain</th><th class="right" title="${RET_TIPS.md}">Money-wtd</th><th class="right" title="${RET_TIPS.simple}">Simple</th></tr></thead><tbody>${d.scope.years.slice().reverse().map(y => `<tr><td>${y.year}${y.end.slice(5) !== '12-31' ? ' <span class="small muted">to ' + y.end.slice(5) + '</span>' : ''}</td><td class="right">${money(y.start_value, cur)}</td><td class="right">${money(y.net_contributions, cur)}</td><td class="right ${y.gain >= 0 ? 'pos' : 'neg'}">${money(y.gain, cur)}</td><td class="right">${pctCell(y.md_return)}</td><td class="right">${pctCell(y.simple_return)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No data</div>'}</div>
    </div>`}`;
   $('#retP').onchange = e => { r.period = e.target.value; if (r.period !== 'custom') renderReturns(); else $('#retCustom').style.display = 'inline-flex'; };
   const go = $('#retGo'); if (go) go.onclick = () => { r.start = $('#retS').value; r.end = $('#retE').value; renderReturns(); };
@@ -334,8 +334,8 @@ async function renderReturns() {
   if ($('#retChart')) {
     const sr = d.scope.series;
     chart('retChart', {type: 'line', data: {labels: sr.map(x => x.date), datasets: [
-      {label: 'Cumulative gain 累计收益', data: sr.map(x => x.cumulative_gain), borderColor: '#8a5cd6', backgroundColor: 'rgba(138,92,214,.12)', fill: true, tension: .2, pointRadius: sr.length > 40 ? 0 : 2},
-      {label: 'Net contributions 净投入', data: sr.map(x => x.net_contributions), borderColor: '#9aa3b2', borderDash: [5, 4], pointRadius: 0, fill: false}]},
+      {label: 'Cumulative gain', data: sr.map(x => x.cumulative_gain), borderColor: '#8a5cd6', backgroundColor: 'rgba(138,92,214,.12)', fill: true, tension: .2, pointRadius: sr.length > 40 ? 0 : 2},
+      {label: 'Net contributions', data: sr.map(x => x.net_contributions), borderColor: '#9aa3b2', borderDash: [5, 4], pointRadius: 0, fill: false}]},
       options: {interaction: {mode: 'index', intersect: false}, scales: {x: {ticks: {maxTicksLimit: 8}}}}});
   }
 }
@@ -344,10 +344,10 @@ async function renderReturns() {
 async function reclassifyTool(includeSavings = false, accountIds = null) {
   const d = await guard(() => api('/api/adjustments/reclassify?include_savings=' + (includeSavings ? 1 : 0) + (accountIds ? `&only=1&account_ids=${accountIds.join(',')}` : '')));
   const cnt = d.by_proposed_reason;
-  const bg = modal('Reclassify adjustments 重新分类余额调整', `<p class="muted" style="margin-top:0">Unclassified balance adjustments (e.g. imported 随手记 <b>余额变更</b>) on ${accountIds ? 'this account' : `investment-type accounts${includeSavings ? ' and savings accounts' : ''}`}, with a proposed <b>reason for difference 差额原因</b>. This is a <b>preview</b>: nothing changes until you press <b>Apply</b> (a backup is taken first). An account's first record is proposed as <i>Opening balance</i>, because exports don't include starting balances.</p>
+  const bg = modal('Reclassify adjustments', `<p class="muted" style="margin-top:0">Unclassified balance adjustments (e.g. imported 随手记 <b>余额变更</b>) on ${accountIds ? 'this account' : `investment-type accounts${includeSavings ? ' and savings accounts' : ''}`}, with a proposed <b>reason for difference</b>. This is a <b>preview</b>: nothing changes until you press <b>Apply</b> (a backup is taken first). An account's first record is proposed as <i>Opening balance</i>, because exports don't include starting balances.</p>
     <div class="row" style="margin-bottom:8px"><label class="chk"><input type="checkbox" id="rcSav" ${includeSavings ? 'checked' : ''}> include savings accounts (propose Interest 利息)</label><span class="sp"></span><label class="chk"><input type="checkbox" id="rcAll" checked> select all</label></div>
     <div class="small" style="margin-bottom:8px"><b>${d.count}</b> adjustments on ${d.accounts} accounts · proposed: ${Object.entries(cnt).map(([k, n]) => `${esc((S.meta.adj_reasons.find(r => r.code === k) || {}).name || k)} ${n}`).join(' · ') || '—'}</div>
-    ${d.rows.length ? `<div class="scroll-x" style="max-height:52vh;overflow:auto"><table class="t"><thead><tr><th></th><th>Date</th><th>Account</th><th class="right">Amount</th><th>Reason 差额原因</th><th>Why</th></tr></thead><tbody>
+    ${d.rows.length ? `<div class="scroll-x" style="max-height:52vh;overflow:auto"><table class="t"><thead><tr><th></th><th>Date</th><th>Account</th><th class="right">Amount</th><th>Reason</th><th>Why</th></tr></thead><tbody>
     ${d.rows.map(x => `<tr><td><input type="checkbox" data-rc="${x.id}" checked></td><td class="nowrap">${esc(x.date.slice(0, 10))}</td><td>${esc(x.account_name)}</td><td class="right ${x.amount >= 0 ? 'pos' : 'neg'}">${money(x.amount, x.currency)}</td>
       <td><select data-rr="${x.id}" style="width:auto">${reasonOptions(x.proposed_reason, {opening: true})}</select></td><td class="small muted">${esc(x.why)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Nothing to reclassify 🎉</div>'}`,
     {wide: true, buttons: `<button class="btn" data-x2>Close</button><button class="btn pri" data-ok ${d.rows.length ? '' : 'disabled'}>Apply to selected</button>`});
@@ -369,11 +369,11 @@ VIEWS.budgets = async (v) => {
   S.bMonth = S.bMonth || thisMonth();
   const d = await api(`/api/budgets?month=${S.bMonth}&ledger_id=${S.ledger || 1}`);
   const prev = (() => { const [y, m] = S.bMonth.split('-').map(Number); const dt = new Date(y, m - 2, 1); return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`; })();
-  v.innerHTML = `${demoBanner()}<div class="card"><h3>Budgets 预算中心<span class="sp"></span><input type="month" id="bm" value="${S.bMonth}" style="width:auto"><button class="btn sm" id="copy">Copy from ${prev}</button><button class="btn sm pri" id="add">+ Set budget</button></h3>
+  v.innerHTML = `${demoBanner()}<div class="card"><h3>Budgets<span class="sp"></span><input type="month" id="bm" value="${S.bMonth}" style="width:auto"><button class="btn sm" id="copy">Copy from ${prev}</button><button class="btn sm pri" id="add">+ Set budget</button></h3>
    ${d.items.length ? d.items.map(b => `<div class="row" style="align-items:flex-start"><div style="flex:1">${budgetRow(b)}</div><button class="btn sm" data-e="${b.category_id ?? ''}" data-a="${b.amount}">Edit</button><button class="btn sm danger" data-d="${b.id}">✕</button></div>`).join('') : '<div class="empty">No budgets for this month. Set a total budget and/or per-category budgets.</div>'}</div>`;
   $('#bm').onchange = e => { S.bMonth = e.target.value; route(); };
   $('#copy').onclick = async () => { await guard(() => api('/api/budgets/copy', {method: 'POST', body: {from: prev, to: S.bMonth, ledger_id: S.ledger || 1}})); route(); };
-  const form = (cid = '', amt = '') => { const bg = modal('Budget ' + S.bMonth, `<form class="form" id="bf"><label class="f full"><span>Category (empty = total budget 总预算)</span><select name="category_id">${catOptions('expense', cid).replace('— Category 分类 —', 'Total budget 总预算')}</select></label><label class="f"><span>Monthly amount (${S.meta.settings.base_currency})</span><input name="amount" type="number" step="0.01" value="${amt}"></label></form>`, {buttons: '<button class="btn pri" data-ok>Save</button>'});
+  const form = (cid = '', amt = '') => { const bg = modal('Budget ' + S.bMonth, `<form class="form" id="bf"><label class="f full"><span>Category (empty = total budget)</span><select name="category_id">${catOptions('expense', cid).replace('— Category —', 'Total budget')}</select></label><label class="f"><span>Monthly amount (${S.meta.settings.base_currency})</span><input name="amount" type="number" step="0.01" value="${amt}"></label></form>`, {buttons: '<button class="btn pri" data-ok>Save</button>'});
     $('[data-ok]', bg).onclick = async () => { const o = Object.fromEntries(new FormData($('#bf', bg))); await guard(() => api('/api/budgets', {method: 'POST', body: {...o, month: S.bMonth, ledger_id: S.ledger || 1}})); bg.close(); route(); }; };
   $('#add').onclick = () => form();
   $$('[data-e]').forEach(b => b.onclick = () => form(b.dataset.e, b.dataset.a));
@@ -386,15 +386,15 @@ VIEWS.reports = async (v) => {
   S.rep = S.rep || {start: `${y}-01-01`, end: today(), group_by: 'category', kind: 'expense'};
   const r = S.rep;
   v.innerHTML = `<div class="card"><form id="rf" class="row"><input type="date" name="start" value="${r.start}" style="width:auto"> → <input type="date" name="end" value="${r.end}" style="width:auto">
-   <select name="kind" style="width:auto"><option value="expense" ${r.kind === 'expense' ? 'selected' : ''}>Expense 支出</option><option value="income" ${r.kind === 'income' ? 'selected' : ''}>Income 收入</option></select>
-   <select name="group_by" style="width:auto">${[['category', 'Category 分类'], ['subcategory', 'Sub-category 子分类'], ['month', 'Month 月份'], ['account', 'Account 账户'], ['member', 'Member 成员'], ['merchant', 'Merchant 商家'], ['project', 'Project 项目'], ['tag', 'Tag 标签']].map(([k, l]) => `<option value="${k}" ${r.group_by === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
-   <select name="project_id" style="width:auto">${listOptions(S.meta.projects, r.project_id, 'All projects 全部项目')}</select>
+   <select name="kind" style="width:auto"><option value="expense" ${r.kind === 'expense' ? 'selected' : ''}>Expense</option><option value="income" ${r.kind === 'income' ? 'selected' : ''}>Income</option></select>
+   <select name="group_by" style="width:auto">${[['category', 'Category'], ['subcategory', 'Sub-category'], ['month', 'Month'], ['account', 'Account'], ['member', 'Member'], ['merchant', 'Merchant'], ['project', 'Project'], ['tag', 'Tag']].map(([k, l]) => `<option value="${k}" ${r.group_by === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+   <select name="project_id" style="width:auto">${listOptions(S.meta.projects, r.project_id, 'All projects')}</select>
    <button class="btn pri">Run</button><span class="sp"></span><span id="rt" class="muted"></span></form></div>
    <div class="grid g2" style="margin-top:16px"><div class="card"><h3>Chart</h3><div class="chart-box" style="height:320px"><canvas id="rc"></canvas></div></div><div class="card"><h3>Table</h3><div id="rtab"></div></div></div>
-   <div class="card" style="margin-top:16px"><h3>Net worth history 净资产 (24 months)</h3><div class="chart-box"><canvas id="rnw"></canvas></div></div>`;
+   <div class="card" style="margin-top:16px"><h3>Net worth history (24 months)</h3><div class="chart-box"><canvas id="rnw"></canvas></div></div>`;
   $('#rf').onsubmit = e => { e.preventDefault(); Object.assign(r, Object.fromEntries(new FormData(e.target))); route(); };
   const d = await api(`/api/reports?${new URLSearchParams(Object.entries({...r, ...(S.ledger ? {ledger_id: S.ledger} : {})}).filter(([, x]) => x !== '' && x != null))}`);
-  $('#rt').innerHTML = `Income ${money(d.totals.income)} · Expense ${money(d.totals.expense)} · Net ${money(d.totals.net)} · <span title="Investment gain/loss + interest + dividends − investment fees (balance adjustments classified by reason). Not part of income/expense.">Investment income 投资收益 <b class="${d.totals.investment_income >= 0 ? 'pos' : 'neg'}">${money(d.totals.investment_income)}</b></span>`;
+  $('#rt').innerHTML = `Income ${money(d.totals.income)} · Expense ${money(d.totals.expense)} · Net ${money(d.totals.net)} · <span title="Investment gain/loss + interest + dividends − investment fees (balance adjustments classified by reason). Not part of income/expense.">Investment income <b class="${d.totals.investment_income >= 0 ? 'pos' : 'neg'}">${money(d.totals.investment_income)}</b></span>`;
   const rows = r.group_by === 'month' ? [...d.rows].sort((a, b) => String(a.key).localeCompare(String(b.key))) : d.rows;
   $('#rtab').innerHTML = rows.length ? `<table class="t"><thead><tr><th>${esc(r.group_by)}</th><th class="right">Count</th><th class="right">Amount</th><th class="right">%</th></tr></thead><tbody>${rows.map(x => `<tr><td>${esc(x.name)}</td><td class="right">${x.count}</td><td class="right">${money(x.amount)}</td><td class="right">${x.pct}%</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No data</div>';
   if (rows.length) chart('rc', r.group_by === 'month' ? {type: 'bar', data: {labels: rows.map(x => x.name), datasets: [{label: r.kind, data: rows.map(x => x.amount), backgroundColor: r.kind === 'income' ? '#14a06f' : '#e8553e'}]}} :
@@ -406,11 +406,11 @@ VIEWS.reports = async (v) => {
 /* ---------- quick add & review ---------- */
 VIEWS.review = async (v) => {
   const d = await api('/api/review');
-  v.innerHTML = `${demoBanner()}<div class="card"><h3>Quick add 快速记账</h3>
+  v.innerHTML = `${demoBanner()}<div class="card"><h3>Quick add</h3>
    <form id="qa2" class="row"><input id="qa2i" placeholder="lunch 25.5 chase sapphire · 午饭 35 支付宝 · salary 5000 to checking · paid 300 from checking to amex" style="flex:1"><label class="chk small"><input type="checkbox" id="qa2r"> always review</label><button type="button" class="btn" id="qa2f">✎ Open in form</button><button class="btn pri">Add</button></form><div class="small muted hide-m" id="qa2hint"></div>
    <div id="qaPrev" class="small muted" style="margin-top:8px;min-height:20px"></div>
    <details class="small muted" style="margin-top:6px"><summary>Syntax help</summary><p>Write the amount, an account name/alias and a keyword. Optional: <code>yesterday</code>/<code>昨天</code>/<code>2026-10-01</code>/<code>10/01</code>, <code>#tag</code>, <code>at Merchant</code>, currency (<code>$</code>, <code>¥</code>, <code>元</code>, <code>usd</code>, <code>rmb</code>). Transfers: <code>from A to B</code>, <code>从A转500到B</code>, <code>pay amex 300 from checking</code>. Refunds: <code>refund 20 amazon chase</code>. Entries below the confidence threshold (${S.meta.settings.review_threshold}) land here for review.</p></details></div>
-  <div class="card" style="margin-top:16px"><h3>To review 待确认 (${d.total})<span class="sp"></span>${d.total ? '<button class="btn sm danger" id="dismissAll">Dismiss all</button>' : ''}</h3>
+  <div class="card" style="margin-top:16px"><h3>To review (${d.total})<span class="sp"></span>${d.total ? '<button class="btn sm danger" id="dismissAll">Dismiss all</button>' : ''}</h3>
    ${d.items.length ? `<div class="scroll-x"><table class="t resp"><thead><tr><th>When</th><th>Source</th><th>Text / parsed</th><th class="right">Amount</th><th>Conf.</th><th></th></tr></thead><tbody>${d.items.map(t => `<tr>
      <td class="small nowrap hide-m">${esc(t.date.slice(0, 16))}</td><td class="hide-m"><span class="pill">${esc(t.source)}</span></td>
      <td><div class="small mono">${esc((t.raw_text || t.note || '').slice(0, 140))}</div><div class="small muted">${kindLabel[t.kind]} · ${esc(t.account_name || '⚠ no account')}${t.to_account_name ? ' → ' + esc(t.to_account_name) : ''} · ${esc(t.category_label || 'no category')}${t.merchant_name ? ' · ' + esc(t.merchant_name) : ''}</div></td>
@@ -426,7 +426,7 @@ VIEWS.review = async (v) => {
   const da = $('#dismissAll'); if (da) da.onclick = async () => { if (!await confirmBox('Delete all items in the review inbox?')) return; await api('/api/transactions/bulk-delete', {method: 'POST', body: {ids: d.items.map(x => x.id)}}); await loadMeta(); route(); };
 };
 function previewText(r) {
-  if (r.action === 'set_balance') return `→ <b>⚖️ Set balance 调整余额</b> ${esc(r.message || '')}`;
+  if (r.action === 'set_balance') return `→ <b>⚖️ Set balance</b> ${esc(r.message || '')}`;
   const p = r.parsed; const a = acctById(p.account_id), b = acctById(p.to_account_id);
   const cat = (() => { for (const root of S.meta.categories) for (const c of root.children) if (c.id === p.category_id) return `${root.name} › ${c.name} ${c.name_zh}`; return ''; })();
   return `→ <b>${kindLabel[p.kind]}</b> ${p.amount ?? '?'} ${p.currency || ''} · ${a ? esc(a.name) : '⚠ no account'}${b ? ' → ' + esc(b.name) : ''}${cat ? ' · ' + esc(cat) : ''}${p.merchant ? ' · @' + esc(p.merchant) : ''}${p.tags.length ? ' · #' + p.tags.map(esc).join(' #') : ''} · ${esc(p.date)} ${confPill(r.confidence)} → <b>${r.status === 'posted' ? 'will post' : 'goes to review'}</b>`;
@@ -441,36 +441,36 @@ async function doQuickAdd(text, review = false) {
 }
 
 /* ---------- scheduled transactions 周期记账 ---------- */
-const WDAY = ['Mon 一', 'Tue 二', 'Wed 三', 'Thu 四', 'Fri 五', 'Sat 六', 'Sun 日'];
-const FREQ_UNIT = {daily: 'day(s) 天', weekly: 'week(s) 周', monthly: 'month(s) 月', quarterly: 'quarter(s) 季', yearly: 'year(s) 年'};
+const WDAY = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const FREQ_UNIT = {daily: 'day(s)', weekly: 'week(s)', monthly: 'month(s)', quarterly: 'quarter(s)', yearly: 'year(s)'};
 function schedFields(s) {
   const st = s.start_date || today(), sd = new Date(st + 'T12:00');
   const wd = (sd.getDay() + 6) % 7;
   const wds = s.weekdays_list || (s.weekdays ? String(s.weekdays).split(',').map(Number) : [wd]);
   const ends = s.end_date ? 'date' : s.max_count ? 'count' : 'never';
   const mm = s.month_mode || 'day';
-  return `<fieldset class="full sched-box"><legend>🔁 Repeat 重复</legend>
+  return `<fieldset class="full sched-box"><legend>🔁 Repeat</legend>
    <div class="form">
-    <label class="f full"><span>Name 名称</span><input name="s_name" value="${esc(s.name || '')}" placeholder="e.g. Rent 房租, Netflix, Salary 工资 (optional)"></label>
-    <label class="f"><span>Repeat 频率</span><select name="s_freq">${[['once', 'Once 一次'], ['daily', 'Daily / every N days 每天'], ['weekly', 'Weekly / every N weeks 每周'], ['monthly', 'Monthly / every N months 每月'], ['quarterly', 'Quarterly 每季度'], ['yearly', 'Yearly 每年']].map(([k, l]) => `<option value="${k}" ${(s.freq || 'monthly') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-    <label class="f" data-s="daily weekly monthly quarterly yearly"><span>Every 每</span><span class="row" style="gap:6px;flex-wrap:nowrap"><input name="s_interval" type="number" min="1" value="${s.interval || 1}" style="width:80px"><span id="sUnit" class="muted"></span></span></label>
-    <div class="f full" data-s="weekly"><span>On 星期</span><div class="wd-chips">${WDAY.map((l, i) => `<label class="chip"><input type="checkbox" name="s_wd" value="${i}" ${wds.includes(i) ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
-    <div class="f full" data-s="monthly quarterly yearly"><span>On 日期</span>
+    <label class="f full"><span>Name</span><input name="s_name" value="${esc(s.name || '')}" placeholder="e.g. Rent 房租, Netflix, Salary 工资 (optional)"></label>
+    <label class="f"><span>Repeat</span><select name="s_freq">${[['once', 'Once'], ['daily', 'Daily / every N days'], ['weekly', 'Weekly / every N weeks'], ['monthly', 'Monthly / every N months'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly']].map(([k, l]) => `<option value="${k}" ${(s.freq || 'monthly') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label class="f" data-s="daily weekly monthly quarterly yearly"><span>Every</span><span class="row" style="gap:6px;flex-wrap:nowrap"><input name="s_interval" type="number" min="1" value="${s.interval || 1}" style="width:80px"><span id="sUnit" class="muted"></span></span></label>
+    <div class="f full" data-s="weekly"><span>On</span><div class="wd-chips">${WDAY.map((l, i) => `<label class="chip"><input type="checkbox" name="s_wd" value="${i}" ${wds.includes(i) ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
+    <div class="f full" data-s="monthly quarterly yearly"><span>On</span>
       <div class="row" style="gap:6px"><label class="chk"><input type="radio" name="s_mm" value="day" ${mm === 'day' ? 'checked' : ''}> day</label>
-        <select name="s_mday" style="width:auto">${Array.from({length: 31}, (_, i) => i + 1).map(d => `<option value="${d}" ${(s.month_day ?? sd.getDate()) == d ? 'selected' : ''}>${d}</option>`).join('')}<option value="-1" ${s.month_day == -1 ? 'selected' : ''}>Last day 月末</option></select>
+        <select name="s_mday" style="width:auto">${Array.from({length: 31}, (_, i) => i + 1).map(d => `<option value="${d}" ${(s.month_day ?? sd.getDate()) == d ? 'selected' : ''}>${d}</option>`).join('')}<option value="-1" ${s.month_day == -1 ? 'selected' : ''}>Last day</option></select>
         <span class="small muted">(short months use their last day)</span></div>
       <div class="row" style="gap:6px;margin-top:4px"><label class="chk"><input type="radio" name="s_mm" value="nth" ${mm === 'nth' ? 'checked' : ''}> the</label>
         <select name="s_nth" style="width:auto">${[[1, '1st'], [2, '2nd'], [3, '3rd'], [4, '4th'], [5, '5th'], [-1, 'last']].map(([k, l]) => `<option value="${k}" ${(s.nth ?? Math.min(4, Math.floor((sd.getDate() - 1) / 7) + 1)) == k ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <select name="s_nwd" style="width:auto">${WDAY.map((l, i) => `<option value="${i}" ${(s.nth_weekday ?? wd) == i ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
-    <label class="f"><span>Start date 开始</span><input name="s_start" type="date" value="${esc(st)}"></label>
-    <label class="f"><span>Time of day 时间</span><input name="s_time" type="time" value="${esc(s.time_of_day || '09:00')}"></label>
-    <label class="f"><span>Ends 结束</span><select name="s_ends"><option value="never" ${ends === 'never' ? 'selected' : ''}>Never 不结束</option><option value="date" ${ends === 'date' ? 'selected' : ''}>On date 截止日期</option><option value="count" ${ends === 'count' ? 'selected' : ''}>After N times 次数</option></select></label>
+    <label class="f"><span>Start date</span><input name="s_start" type="date" value="${esc(st)}"></label>
+    <label class="f"><span>Time of day</span><input name="s_time" type="time" value="${esc(s.time_of_day || '09:00')}"></label>
+    <label class="f"><span>Ends</span><select name="s_ends"><option value="never" ${ends === 'never' ? 'selected' : ''}>Never</option><option value="date" ${ends === 'date' ? 'selected' : ''}>On date</option><option value="count" ${ends === 'count' ? 'selected' : ''}>After N times</option></select></label>
     <label class="f" id="sEndD"><span>End date</span><input name="s_end" type="date" value="${esc(s.end_date || '')}"></label>
-    <label class="f" id="sEndN"><span>Occurrences 次数</span><input name="s_count" type="number" min="1" value="${s.max_count || 12}"></label>
-    <label class="f"><span>When due 到期时</span><select name="s_post"><option value="post" ${s.post_mode !== 'review' ? 'selected' : ''}>Post automatically 自动入账</option><option value="review" ${s.post_mode === 'review' ? 'selected' : ''}>Create in To review 待确认</option><option value="remind" ${s.post_mode === 'remind' ? 'selected' : ''}>Remind only 仅提醒 (no transaction)</option></select></label>
-    <label class="f"><span>Remind days before 提前提醒天数</span><input name="s_lead" type="number" min="0" max="365" value="${s.lead_days ?? ''}" placeholder="default (Settings, 10)"></label>
-    <label class="chk full"><input type="checkbox" name="s_var" ${s.variable_amount ? 'checked' : ''}> Variable amount — confirm each time 金额不固定，每次确认 <span class="small muted">(always goes to To review; the amount above is a suggestion)</span></label>
-    <div class="full sched-next"><div class="small"><b id="sDesc"></b></div><div class="small muted">Next 5 下次: <span id="sNext">…</span></div><div class="small neg" id="sPast"></div></div>
+    <label class="f" id="sEndN"><span>Occurrences</span><input name="s_count" type="number" min="1" value="${s.max_count || 12}"></label>
+    <label class="f"><span>When due</span><select name="s_post"><option value="post" ${s.post_mode !== 'review' ? 'selected' : ''}>Post automatically</option><option value="review" ${s.post_mode === 'review' ? 'selected' : ''}>Create in To review</option><option value="remind" ${s.post_mode === 'remind' ? 'selected' : ''}>Remind only (no transaction)</option></select></label>
+    <label class="f"><span>Remind days before</span><input name="s_lead" type="number" min="0" max="365" value="${s.lead_days ?? ''}" placeholder="default (Settings, 10)"></label>
+    <label class="chk full"><input type="checkbox" name="s_var" ${s.variable_amount ? 'checked' : ''}> Variable amount — confirm each time <span class="small muted">(always goes to To review; the amount above is a suggestion)</span></label>
+    <div class="full sched-next"><div class="small"><b id="sDesc"></b></div><div class="small muted">Next 5: <span id="sNext">…</span></div><div class="small neg" id="sPast"></div></div>
    </div></fieldset>`;
 }
 function readSched(form) {
@@ -523,8 +523,8 @@ function openSchedule(s = {}, after) {
   return openTx(null, after, preset, {schedule: s});
 }
 async function deleteSchedule(s) {
-  const bg = modal('Delete schedule 删除定时记账', `<p>Delete <b>${esc(s.name)}</b>?</p>
-    <label class="chk"><input type="radio" name="kh" value="1" checked> Keep the ${s.generated_count || 0} transaction(s) it already created 保留历史</label>
+  const bg = modal('Delete schedule', `<p>Delete <b>${esc(s.name)}</b>?</p>
+    <label class="chk"><input type="radio" name="kh" value="1" checked> Keep the ${s.generated_count || 0} transaction(s) it already created</label>
     <label class="chk"><input type="radio" name="kh" value="0"> Also delete those transactions</label>`,
     {buttons: '<button class="btn" data-x2>Cancel</button><button class="btn danger" data-ok>Delete</button>'});
   $('[data-x2]', bg).onclick = bg.close;
@@ -540,14 +540,14 @@ VIEWS.scheduled = async (v) => {
   const d = await api('/api/schedules');
   const stt = d.settings;
   v.innerHTML = `${demoBanner()}<div class="grid g2 sched-top">
-   <div class="card"><h3>Upcoming 即将到期 · next 30 days</h3>${upcomingList(d.upcoming.slice(0, 15))}${d.upcoming.length > 15 ? `<div class="small muted">+ ${d.upcoming.length - 15} more</div>` : ''}</div>
-   <div class="card"><h3>Runner 自动生成<span class="sp"></span><button class="btn sm" id="sDry">Preview run</button><button class="btn sm pri" id="sRun">▶ Run now</button></h3>
+   <div class="card"><h3>Upcoming · next 30 days</h3>${upcomingList(d.upcoming.slice(0, 15))}${d.upcoming.length > 15 ? `<div class="small muted">+ ${d.upcoming.length - 15} more</div>` : ''}</div>
+   <div class="card"><h3>Runner<span class="sp"></span><button class="btn sm" id="sDry">Preview run</button><button class="btn sm pri" id="sRun">▶ Run now</button></h3>
     <div class="small muted">Runs daily at <b>${esc(stt.schedule_run_time)}</b> (${esc(stt.timezone)}) and when the server starts, creating every occurrence due up to today. Missed days are caught up for at most <b>${esc(stt.schedule_catchup_days)}</b> days. Re-running never duplicates.</div>
     <form class="row" id="sSet" style="margin:8px 0"><label class="small">Run at <input name="schedule_run_time" type="time" value="${esc(stt.schedule_run_time)}" style="width:auto"></label><label class="small">Catch up ≤ <input name="schedule_catchup_days" type="number" min="0" value="${esc(stt.schedule_catchup_days)}" style="width:80px"> days</label><button class="btn sm">Save</button></form>
-    <h4 style="margin:10px 0 4px">Run log 运行记录</h4>${d.runs.length ? `<table class="t small"><thead><tr><th>Time</th><th>Trigger</th><th class="right">Created</th><th>Result</th></tr></thead><tbody>${d.runs.slice(0, 6).map(r => `<tr><td class="nowrap">${esc(r.time.slice(5, 16))}</td><td>${esc(r.trigger)}</td><td class="right">${r.generated}</td><td>${esc(r.summary)}${r.errors.length ? `<div class="neg">${r.errors.map(e => esc(e.error)).join('<br>')}</div>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No runs yet</div>'}</div></div>
-   <div class="card" style="margin-top:16px"><h3>Scheduled 定时记账 (${d.items.length})<span class="sp"></span><button class="btn sm pri" id="sAdd">+ New schedule</button></h3>
+    <h4 style="margin:10px 0 4px">Run log</h4>${d.runs.length ? `<table class="t small"><thead><tr><th>Time</th><th>Trigger</th><th class="right">Created</th><th>Result</th></tr></thead><tbody>${d.runs.slice(0, 6).map(r => `<tr><td class="nowrap">${esc(r.time.slice(5, 16))}</td><td>${esc(r.trigger)}</td><td class="right">${r.generated}</td><td>${esc(r.summary)}${r.errors.length ? `<div class="neg">${r.errors.map(e => esc(e.error)).join('<br>')}</div>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No runs yet</div>'}</div></div>
+   <div class="card" style="margin-top:16px"><h3>Scheduled (${d.items.length})<span class="sp"></span><button class="btn sm pri" id="sAdd">+ New schedule</button></h3>
    ${d.items.length ? `<div class="scroll-x"><table class="t resp"><thead><tr><th>Name</th><th>Repeats</th><th>Account</th><th class="right">Amount</th><th>Next</th><th class="right hide-m">Created</th><th></th></tr></thead><tbody>
-   ${d.items.map(s => `<tr class="${s.enabled ? '' : 'paused'}"><td><b>${esc(s.name)}</b><div class="small muted">${esc(kindLabel[s.template.kind] || s.template.kind)}${s.post_mode === 'remind' ? ' · <span class="pill">⏰ remind only</span>' : s.post_mode === 'review' || s.variable_amount ? ' · <span class="pill">to review</span>' : ' · auto-post'}${s.enabled ? '' : ' · <span class="pill warn">paused 已暂停</span>'}${s.finished ? ' · <span class="pill">ended</span>' : ''}</div></td>
+   ${d.items.map(s => `<tr class="${s.enabled ? '' : 'paused'}"><td><b>${esc(s.name)}</b><div class="small muted">${esc(kindLabel[s.template.kind] || s.template.kind)}${s.post_mode === 'remind' ? ' · <span class="pill">⏰ remind only</span>' : s.post_mode === 'review' || s.variable_amount ? ' · <span class="pill">to review</span>' : ' · auto-post'}${s.enabled ? '' : ' · <span class="pill warn">paused</span>'}${s.finished ? ' · <span class="pill">ended</span>' : ''}</div></td>
      <td class="small">${esc(s.description)}</td><td class="small">${esc(s.account_name || '')}${s.to_account_name ? ' → ' + esc(s.to_account_name) : ''}</td>
      <td class="right nowrap">${s.template.amount != null ? money(s.template.amount, s.currency) : '<span class="muted">variable</span>'}${s.variable_amount ? '<div class="small muted">variable</div>' : ''}</td>
      <td class="small nowrap">${s.next_dates[0] ? esc(s.next_dates[0]) : '<span class="muted">—</span>'}</td><td class="right small hide-m"><a href="#/transactions/?source=scheduled">${s.generated_count}</a>${s.last_generated ? `<div class="muted">last ${esc(s.last_generated)}</div>` : ''}</td>

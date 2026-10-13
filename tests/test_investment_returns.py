@@ -156,7 +156,7 @@ def test_gain_identity_with_trades_dividends_and_groups(client):
     assert g["gain"] == 375 and g["components_total"] == 375
     rep = client.get("/api/investments/returns", params={"period": "all"}).json()
     names = {row["name"]: row for row in rep["rows"]}
-    assert names["All investments 全部投资"]["gain"] == 375 and "Fake Checking" not in names
+    assert names["All investments"]["gain"] == 375 and "Fake Checking" not in names
     assert rep["scope"]["series"][-1]["cumulative_gain"] == 375
     assert sum(y["gain"] for y in rep["scope"]["years"]) == pytest.approx(375)
 

@@ -1081,7 +1081,7 @@ def record_opening_balance(db: Database, account_id: int, amount: float, date: s
 
 
 # ---------------------------------------------------------------- user preferences (stored in settings as JSON)
-PREF_KEYS = {"tx_last", "quickadd_enter"}
+PREF_KEYS = {"tx_last", "quickadd_enter", "ui_lang"}
 TX_LAST_FIELDS = ("account_id", "to_account_id", "category_id", "currency", "member_id")
 
 
@@ -1109,6 +1109,10 @@ def update_prefs(db: Database, body: dict) -> dict:
             if v not in ("add", "form"):
                 raise ValidationError("quickadd_enter must be 'add' or 'form'")
             p[k] = v
+        elif k == "ui_lang":  # saved UI language ('' = follow the browser)
+            if v and not re.fullmatch(r"[a-z]{2,3}(-[A-Za-z]{2,4})?", str(v)):
+                raise ValidationError("ui_lang must be a language code like 'en' or 'zh-CN'")
+            p[k] = v or ""
         elif k == "tx_last":
             if not isinstance(v, dict):
                 raise ValidationError("tx_last must be an object keyed by transaction type")

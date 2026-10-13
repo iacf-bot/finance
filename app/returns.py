@@ -310,7 +310,7 @@ def report(db: Database, period: str = "ytd", start=None, end=None, scope: str =
             rows.append({"level": "account", "id": m["id"], "name": m["name"], "type": m["type"], "group_id": gid,
                          "account_currency": m["currency"], "archived": m["archived"], **_with_pr(r, P([m["id"]]))})
         rows.append({"level": "group", "id": gid, "name": gname, "account_ids": ids, **_with_pr(compute(db, ids, s, e, base, today=today), P(ids))})
-    total = {"level": "total", "id": None, "name": "All investments 全部投资", "account_ids": all_ids,
+    total = {"level": "total", "id": None, "name": "All investments", "account_ids": all_ids,
              **_with_pr(compute(db, all_ids, s, e, base, today=today), P(all_ids))}
     rows.append(total)
     # scope for chart + per-year table
