@@ -7,20 +7,24 @@
   <aside class="sidebar">
     <div class="brand"><span class="logo">记</span> IACF Finance</div>
     <nav class="nav" id="nav"></nav>
-    <div class="foot"><select id="ledgerSel" title="Ledger 账本" style="background:#2a3244;color:#cfd5e2;border-color:#394257"></select>
+    <div class="foot"><select id="langSel" title="Language" aria-label="Language" style="background:#2a3244;color:#cfd5e2;border-color:#394257;margin-bottom:6px" data-notr></select><select id="ledgerSel" title="Ledger" style="background:#2a3244;color:#cfd5e2;border-color:#394257"></select>
       <div style="margin-top:8px"><a href="#" id="logout" style="color:#8d96a8">Log out</a></div></div>
   </aside>
   <div class="main">
     <div class="topbar"><h1 id="title">Dashboard</h1>
-      <form class="qa" id="qaForm" autocomplete="off"><input id="qaInput" placeholder="Quick add 记一笔: lunch 25.5 chase sapphire · 午饭 35 支付宝"><button type="button" class="btn" id="qaFormBtn" title="Open in the pre-filled form to review before saving (Shift+Enter)">✎<span class="hide-m"> Review</span></button><button class="btn pri" id="qaAddBtn">Add</button></form>
+      <form class="qa" id="qaForm" autocomplete="off"><input id="qaInput" placeholder="Quick add: lunch 25.5 chase sapphire · 午饭 35 支付宝"><button type="button" class="btn" id="qaFormBtn" title="Open in the pre-filled form to review before saving (Shift+Enter)">✎<span class="hide-m"> Review</span></button><button class="btn pri" id="qaAddBtn">Add</button></form>
     </div>
     <div class="content" id="view"></div>
   </div>
 </div>
 <nav class="mobile-nav" id="mnav"></nav>
-<button class="fab" id="fab" title="New transaction 记一笔">+</button>
+<button class="fab" id="fab" title="New transaction">+</button>
 <div id="toast"></div>
 <script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/js/00_i18n.js"></script>
+<script src="/static/locales/en.js"></script>
+<script src="/static/locales/zh-CN.js"></script>
+<script src="/static/locales/zh-TW.js"></script>
 <script src="/static/js/01_core.js"></script>
 <script src="/static/js/02_tx.js"></script>
 <script src="/static/js/03_pages.js"></script>

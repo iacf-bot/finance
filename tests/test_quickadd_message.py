@@ -27,7 +27,7 @@ def test_posted_messages_english_and_chinese(client):
     r = qa(client, "coffee 4.50 cash").json()
     assert r["status"] == "posted" and r["message"] == "Saved: Coffee $4.50 · Cash"
     assert {"parsed", "confidence", "status", "threshold", "transaction"} <= set(r)  # existing keys kept
-    assert qa(client, "午饭 35 支付宝").json()["message"] == "已记: 午饭 ¥35 · Alipay"
+    assert qa(client, "午饭 35 支付宝", params={"lang": "zh-CN"}).json()["message"] == "已记: 午饭 ¥35 · Alipay"
     assert qa(client, "salary 3000 checking").json()["message"] == "Saved: Salary +$3,000 · Checking"
 
 
@@ -50,7 +50,7 @@ def test_balance_and_reconcile_messages_keep_long_detail(client, db):
     r = qa(client, "balance alipay 1234.5").json()
     assert r["message"] == "Balance set: Alipay ¥1,234.50" and len(r["detail"]) > len(r["message"])
     assert qa(client, "balance alipay 1234.5").json()["message"] == "Balance unchanged: Alipay ¥1,234.50"
-    assert qa(client, "余额 支付宝 1234.5").json()["message"] == "余额无变化: Alipay ¥1,234.50"
+    assert qa(client, "余额 支付宝 1234.5", headers={"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}).json()["message"] == "余额无变化: Alipay ¥1,234.50"
     r = qa(client, "reconcile alipay 1234.5").json()
     assert r["action"] == "reconcile" and r["message"].startswith("Reconciled: Alipay ¥1,234.50")
 
@@ -61,7 +61,7 @@ def test_errors_are_json_with_message(client):
     assert r.status_code == 400 and r.json()["message"].startswith("Nothing to add") and r.json()["detail"]
     r = qa(client, "reconcile cash 54")  # mismatch -> 400
     assert r.status_code == 400 and r.json()["message"].startswith("Couldn't save: ")
-    r = qa(client, "对账 现金 54")
+    r = qa(client, "对账 现金 54", params={"lang": "zh"})
     assert r.status_code == 400 and r.json()["message"].startswith("没记上: ")
     r = client.post("/api/quick-add", json={"text": "x 1"}, headers={"X-API-Key": "wrong"})
     assert r.status_code == 401 and "message" in r.json()
@@ -79,4 +79,4 @@ def test_body_formats_from_shortcuts(client, db):
     assert qa(client, content=b"bus 2 cash", headers={"Content-Type": "application/json"}).json()["message"] == "Saved: Bus $2 · Cash"
     assert qa(client, content=b'"snack 1 cash"', headers={"Content-Type": "application/json"}).json()["message"] == "Saved: Snack $1 · Cash"
     assert qa(client, data={"text": "gum 1 cash"}).json()["message"] == "Saved: Gum $1 · Cash"
-    assert qa(client, content="午饭 20 支付宝".encode(), headers={"Content-Type": ""}).json()["message"] == "已记: 午饭 ¥20 · Alipay"
+    assert qa(client, content="午饭 20 支付宝".encode(), headers={"Content-Type": "", "Accept-Language": "zh-TW"}).json()["message"] == "已记: 午饭 ¥20 · Alipay"

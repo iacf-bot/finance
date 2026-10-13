@@ -318,9 +318,11 @@ def mark_paid(db: Database, rid: int, body: dict) -> dict:
 def _zh(lang: str, db: Database) -> bool:
     if lang in ("zh", "cn"):
         return True
-    if lang == "en":
-        return False
-    return bool(re.search(r"[\u3400-\u9fff]", " ".join(a["name"] for a in db.all("SELECT name FROM accounts WHERE archived=0 LIMIT 50"))))
+    if lang and lang not in ("auto",):
+        from .ingest import resolve_lang
+        return resolve_lang(lang) == "zh"
+    from .ingest import msg_zh  # auto: the request's Accept-Language (set by main.py), default English
+    return msg_zh()
 
 
 def digest(db: Database, days: int = 7, include_overdue: bool = True, lang: str = "auto", on: date | None = None) -> dict:

@@ -64,6 +64,13 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     app.state.secret = secret
     fails: dict[str, list[float]] = defaultdict(list)
 
+    # ------------------------------------------------------------ reply-message language
+    @app.middleware("http")
+    async def lang_mw(request: Request, call_next):
+        # API 'message' texts: ?lang= param > Accept-Language > English (user data is never translated)
+        ingest.MSG_LANG.set(ingest.resolve_lang(request.query_params.get("lang"), request.headers.get("accept-language")))
+        return await call_next(request)
+
     # ------------------------------------------------------------ auth middleware
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
@@ -804,7 +811,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             out["status"] = out["transaction"]["status"]
         else:
             out["status"] = "draft"
-        zh = bool(re.search(r"[\u3400-\u9fff]", out["ocr_text"] or "")) and not re.search(r"[A-Za-z]{4,}", (out["draft"].get("merchant") or ""))
+        zh = ingest.msg_zh()
         out["message"] = ingest.receipt_message(out, zh)
         if not out["ocr"].get("available"):
             out["message"] += " · OCR off on the server: " + out["ocr"].get("message", "")[:120]

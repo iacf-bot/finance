@@ -136,7 +136,7 @@ def test_unlink_on_delete(client, db):
 
 def test_quick_add_flag(client):
     C, W, CASH = setup(client)
-    r = client.post("/api/quick-add", json={"text": "报销 午饭 35 支付宝"}).json()
+    r = client.post("/api/quick-add", json={"text": "报销 午饭 35 支付宝"}, headers={"Accept-Language": "zh-CN"}).json()
     assert r["transaction"]["reimbursable"] == 1 and r["message"].startswith("已记(可报销): 午饭")
     r = client.post("/api/quick-add", json={"text": "taxi 23 cash #reimb:Acme"}).json()
     assert r["transaction"]["reimbursable"] == 1 and r["transaction"]["reimb_payer"] == "Acme"

@@ -700,3 +700,18 @@ Group transactions across categories and accounts: trips, renovations, events.
   - `POST /api/projects/assign` `{ids, project_id|null}`
   - `GET/PUT /api/projects/{id}/plan` `{lines: [{category_id|null, amount, note}]}`
   - `POST /api/projects/{id}/plan/copy` `{from_project_id, scale}`
+
+## Languages (i18n)
+
+The web UI is English by default and also ships in 简体中文 (zh-CN) and 繁體中文 (zh-TW).
+
+- **Which language is used:** the choice saved in this browser (the 🌐 picker in the sidebar, stored in `localStorage` and in the server pref `ui_lang`) > the browser's languages (`navigator.languages`; zh-Hant/TW/HK/MO → zh-TW, other zh → zh-CN) > English. A missing translation falls back to the English text.
+- Dates, numbers and currency are formatted with `Intl` for the chosen locale. User data such as account and category names is never translated; a category shows its Chinese name (`name_zh`) in Chinese when it has one.
+- **API reply `message` texts** (quick-add, receipts, `/api/reminders/notify`) use `?lang=` (`en`, `zh`, `zh-CN`, `zh-TW`) > the `Accept-Language` header > English. iPhone Shortcuts that want Chinese replies can add `?lang=zh`.
+
+**Adding a language:**
+1. Copy `locales/zh-CN.json` to `locales/<code>.json` (e.g. `ja`). Keys are the English UI strings; translate the values and set `_name` to the language's own name. Keep `{n}`-style placeholders.
+2. Run `python scripts/i18n_build.py`. It writes `static/locales/<code>.js`.
+3. Add `<script src="/static/locales/<code>.js"></script>` next to the other locale scripts in `static/index.html`.
+
+`zh-TW` is generated from zh-CN with `python scripts/i18n_build.py --tw` (needs `pip install opencc-python-reimplemented`, a dev-only tool). Fixes go in `_overrides` in `locales/zh-TW.json`. New UI text should be plain English in the source; add its translation to the locale JSON files.

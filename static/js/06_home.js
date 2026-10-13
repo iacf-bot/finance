@@ -1,18 +1,18 @@
 /* ---------- Home 首页: month cards + quick add + this month's transactions (infinite scroll into older months) ---------- */
 S.homeMonth = null;
-const monthLabel = m => { const [y, mo] = m.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleString(undefined, {month: 'short', year: 'numeric'}); };
-const monthLong = m => { const [y, mo] = m.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleString(undefined, {month: 'long', year: 'numeric'}); };
+const monthLabel = m => { const [y, mo] = m.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleString(i18nLocale(), {month: 'short', year: 'numeric'}); };
+const monthLong = m => { const [y, mo] = m.split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleString(i18nLocale(), {month: 'long', year: 'numeric'}); };
 function homeRowHtml(t) {
   const title = t.kind === 'transfer' ? `${esc(t.account_name || '?')} → ${esc(t.to_account_name || '?')}`
-    : t.kind === 'adjustment' ? (t.adj_reason === 'opening' ? 'Opening balance 期初余额' : `Balance adj. 余额调整 · ${esc(t.adj_reason_label || '')}`)
+    : t.kind === 'adjustment' ? (t.adj_reason === 'opening' ? 'Opening balance' : `Balance adj. · ${esc(t.adj_reason_label || '')}`)
     : ['buy', 'sell', 'dividend', 'invest_fee'].includes(t.kind) ? `${kindLabel[t.kind]} ${esc(t.ticker || '')}`
-    : t.kind === 'reimbursement' ? `Reimbursement 报销到账${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}`
-    : t.category_name ? `${esc(t.category_name)}${t.category_name_zh ? ` <span class="muted">${esc(t.category_name_zh)}</span>` : ''}` : 'Uncategorized 未分类';
+    : t.kind === 'reimbursement' ? `Reimbursement${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}`
+    : t.category_name ? `${esc(t.category_name)}${t.category_name_zh ? ` <span class="muted">${esc(t.category_name_zh)}</span>` : ''}` : 'Uncategorized';
   const what = [t.merchant_name, t.note].filter(Boolean).map(x => esc(String(x).slice(0, 60))).join(' · ');
   const where = t.kind === 'transfer' ? '' : esc(t.account_name || '');
   return `<div class="hrow" data-tx="${t.id}" role="button" tabindex="0">
     <div class="hico" aria-hidden="true">${catIcon(t)}</div>
-    <div class="hmain"><div class="htop">${title}${t.status === 'review' ? ' <span class="pill review">review</span>' : ''}${t.kind === 'expense' && t.reimbursable ? ` <span class="pill reimb">${t.reimb_writeoff ? '已核销' : '可报销'}</span>` : ''}${t.reconciled_id ? ' <span class="rec-badge" title="Reconciled 已对账">✔</span>' : ''}</div>
+    <div class="hmain"><div class="htop">${title}${t.status === 'review' ? ' <span class="pill review">review</span>' : ''}${t.kind === 'expense' && t.reimbursable ? ` <span class="pill reimb">${t.reimb_writeoff ? '已核销' : '可报销'}</span>` : ''}${t.reconciled_id ? ' <span class="rec-badge" title="Reconciled">✔</span>' : ''}</div>
       <div class="hsub">${what ? `<span class="hwhat">${what}</span>` : ''}<span class="muted">${esc(t.date.slice(5, 10))} ${esc(t.date.slice(11, 16))}${where ? ' · ' + where : ''}</span></div></div>
     <div class="hamt">${txAmount(t)}</div></div>`;
 }
@@ -24,21 +24,21 @@ VIEWS.home = async (v) => {
   const isNow = month === thisMonth();
   const lq = S.ledger ? '&ledger_id=' + S.ledger : '';
   v.innerHTML = `${demoBanner()}<div class="home">
-    <div class="month-sw"><button class="btn sm" id="hmPrev" aria-label="Previous month">‹</button><b>${esc(monthLabel(month))}</b><button class="btn sm" id="hmNext" aria-label="Next month">›</button>${isNow ? '' : '<button class="btn sm" id="hmNow">This month 本月</button>'}</div>
-    <div class="home-cards" id="hmCards"><div class="card stat"><div class="lbl">Income 收入</div><div class="val">…</div></div><div class="card stat"><div class="lbl">Expense 支出</div><div class="val">…</div></div><div class="card stat"><div class="lbl">Net 结余</div><div class="val">…</div></div><div class="card stat"><div class="lbl">Investment income 投资收益</div><div class="val">…</div></div></div>
+    <div class="month-sw"><button class="btn sm" id="hmPrev" aria-label="Previous month">‹</button><b>${esc(monthLabel(month))}</b><button class="btn sm" id="hmNext" aria-label="Next month">›</button>${isNow ? '' : '<button class="btn sm" id="hmNow">This month</button>'}</div>
+    <div class="home-cards" id="hmCards"><div class="card stat"><div class="lbl">Income</div><div class="val">…</div></div><div class="card stat"><div class="lbl">Expense</div><div class="val">…</div></div><div class="card stat"><div class="lbl">Net</div><div class="val">…</div></div><div class="card stat"><div class="lbl">Investment income</div><div class="val">…</div></div></div>
     <div class="card home-add">
-      <form class="qa" id="hqForm" autocomplete="off"><input id="hqInput" enterkeyhint="send" placeholder="记一笔 Quick add: lunch 25.5 chase · 午饭 35 支付宝"><button type="button" class="btn" id="hqFormBtn">✎<span class="hide-s"> Review</span></button><button class="btn pri" id="hqAdd">Add</button></form>
-      <button type="button" class="btn" id="hqDetail">+ Detailed 详细记账</button></div>
+      <form class="qa" id="hqForm" autocomplete="off"><input id="hqInput" enterkeyhint="send" placeholder="Quick add: lunch 25.5 chase · 午饭 35 支付宝"><button type="button" class="btn" id="hqFormBtn">✎<span class="hide-s"> Review</span></button><button class="btn pri" id="hqAdd">Add</button></form>
+      <button type="button" class="btn" id="hqDetail">+ Detailed</button></div>
     <div id="hmRem"></div>
     <div class="card home-list"><div id="hmList" class="hlist"></div></div></div>`;
-  api('/api/reminders?view=open').then(d => { if (d.items.length) $('#hmRem').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><b>⏰ Reminders 提醒</b><a href="#/reminders" class="small">All 全部 ›</a></div>${d.items.slice(0, 5).map(remLine).join('')}</div>`; }).catch(() => {});
+  api('/api/reminders?view=open').then(d => { if (d.items.length) $('#hmRem').innerHTML = `<div class="card"><div class="row" style="justify-content:space-between"><b>⏰ Reminders</b><a href="#/reminders" class="small">All 全部 ›</a></div>${d.items.slice(0, 5).map(remLine).join('')}</div>`; }).catch(() => {});
   const go = m => { S.homeMonth = m === thisMonth() ? null : m; route(); };
   api(`/api/summary/month?month=${month}${lq}`).then(s => {
     $('#hmPrev').onclick = () => go(s.prev); $('#hmNext').onclick = () => go(s.next);
     const card = (lbl, val, cls, extra = '') => `<div class="card stat"><div class="lbl">${lbl}</div><div class="val ${cls}">${money(val, s.currency)}</div>${extra}</div>`;
-    $('#hmCards').innerHTML = card('Income 收入', s.income, 'pos') + card('Expense 支出', s.expense, 'neg')
-      + card('Net 结余', s.net, s.net >= 0 ? 'pos' : 'neg', `<div class="small muted">${s.count} transactions 笔</div>`)
-      + card('Investment income 投资收益', s.investment_income, s.investment_income >= 0 ? 'pos' : 'neg', '<div class="small muted">not part of income/expense</div>');
+    $('#hmCards').innerHTML = card('Income', s.income, 'pos') + card('Expense', s.expense, 'neg')
+      + card('Net', s.net, s.net >= 0 ? 'pos' : 'neg', `<div class="small muted">${s.count} transactions</div>`)
+      + card('Investment income', s.investment_income, s.investment_income >= 0 ? 'pos' : 'neg', '<div class="small muted">not part of income/expense</div>');
   }).catch(e => toast(e.message, true));
   const ym = month.split('-').map(Number);
   $('#hmPrev').onclick = () => go(ym[1] > 1 ? `${ym[0]}-${String(ym[1] - 1).padStart(2, '0')}` : `${ym[0] - 1}-12`);
@@ -64,13 +64,13 @@ VIEWS.home = async (v) => {
       list.insertAdjacentHTML('beforeend', html);
       bindHomeRows(list, after);
     },
-    endHtml: 'That\'s everything 已经到底了',
+    endHtml: 'That\'s everything',
   });
 };
 
 /* ---------- Account detail / history 账户明细 (#/account/<id>) ---------- */
 S.acctHist = {};
-const PERIODS = [['1M', '1M'], ['3M', '3M'], ['6M', '6M'], ['YTD', 'YTD'], ['1Y', '1Y'], ['3Y', '3Y'], ['ALL', 'All 全部'], ['CUSTOM', 'Custom 自定义']];
+const PERIODS = [['1M', '1M'], ['3M', '3M'], ['6M', '6M'], ['YTD', 'YTD'], ['1Y', '1Y'], ['3Y', '3Y'], ['ALL', 'All'], ['CUSTOM', 'Custom']];
 VIEWS.account = async (v, rest, ctx = {}) => {
   const id = parseInt(rest[0]);
   const inInv = ctx.section === 'investments';  // opened from Investments: back goes to the Investments list
@@ -82,8 +82,8 @@ VIEWS.account = async (v, rest, ctx = {}) => {
    <div class="card" style="margin-top:12px"><form id="ahFlt" class="ah-flt" autocomplete="off">
      <div class="chips" role="group" aria-label="Period">${PERIODS.map(([k, l]) => `<button type="button" class="chip${st.period === k ? ' on' : ''}" data-p="${k}">${l}</button>`).join('')}</div>
      <span class="ah-custom"${st.period === 'CUSTOM' ? '' : ' hidden'}><input type="date" name="start" value="${esc(st.start || '')}" aria-label="From"> – <input type="date" name="end" value="${esc(st.end || '')}" aria-label="To"></span>
-     <input type="search" name="q" placeholder="Search 搜索" value="${esc(st.q || '')}">
-     <select name="category_id">${catOptions('', st.category_id || '').replace('— Category 分类 —', 'All categories 全部分类')}</select>
+     <input type="search" name="q" placeholder="Search" value="${esc(st.q || '')}">
+     <select name="category_id">${catOptions('', st.category_id || '').replace('— Category —', 'All categories')}</select>
    </form><div id="ahSum" class="ah-sum small"></div><div id="ahList"></div></div>`;
   const f = $('#ahFlt');
   const apply = () => { st.q = f.q.value.trim(); st.category_id = f.category_id.value; st.start = f.start.value; st.end = f.end.value; route(); };
@@ -101,12 +101,12 @@ VIEWS.account = async (v, rest, ctx = {}) => {
   const head = (h) => {
     const a = h.account; A = a; $('#title').textContent = a.name;
     const owed = a.is_liability, b = h.balances;
-    $('#ahHead').innerHTML = `<div class="ah-top">${inInv ? '<a href="#/investments" class="small" id="ahBack">← Investments 投资</a>' : '<a href="#/accounts" class="small">← Accounts 账户</a>'}</div>
+    $('#ahHead').innerHTML = `<div class="ah-top">${inInv ? '<a href="#/investments" class="small" id="ahBack">← Investments</a>' : '<a href="#/accounts" class="small">← Accounts</a>'}</div>
       <div class="ah-main"><div><h2>${isDemoName(a.name) ? '<span class="pill demo">DEMO</span> ' : ''}${esc(a.name)} ${a.last4 ? `<span class="muted small">••${esc(a.last4)}</span>` : ''}</h2>
-        <div class="small muted">${esc(a.type_label)} · ${a.currency}${a.institution ? ' · ' + esc(a.institution) : ''}${a.reconciled_at ? ` · <a href="javascript:void 0" class="rec-link" id="ahRec">✔ Reconciled 已对账 ${esc(a.reconciled_at.slice(0, 10))}</a>` : ''}</div></div>
-        <div class="ah-bal"><div class="lbl small muted">${owed ? 'Owed 欠款' : 'Balance 余额'}</div><div class="val ${owed ? (a.owed > 0 ? 'neg' : '') : a.balance < 0 ? 'neg' : ''}">${money(owed ? a.owed : a.balance, a.currency)}</div>
+        <div class="small muted">${esc(a.type_label)} · ${a.currency}${a.institution ? ' · ' + esc(a.institution) : ''}${a.reconciled_at ? ` · <a href="javascript:void 0" class="rec-link" id="ahRec">✔ Reconciled ${esc(a.reconciled_at.slice(0, 10))}</a>` : ''}</div></div>
+        <div class="ah-bal"><div class="lbl small muted">${owed ? 'Owed' : 'Balance'}</div><div class="val ${owed ? (a.owed > 0 ? 'neg' : '') : a.balance < 0 ? 'neg' : ''}">${money(owed ? a.owed : a.balance, a.currency)}</div>
         ${a.is_investment ? `<div class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</div>` : ''}</div></div>
-      <div class="row ah-acts"><button class="btn pri" id="ahAdd">+ Add 记一笔</button><button class="btn" id="ahSet">⚖️ Set balance 调整余额</button><button class="btn" id="ahReconcile">✔ Reconcile 对账</button><button class="btn" id="ahEdit">Edit 编辑</button>
+      <div class="row ah-acts"><button class="btn pri" id="ahAdd">+ Add 记一笔</button><button class="btn" id="ahSet">⚖️ Set balance</button><button class="btn" id="ahReconcile">✔ Reconcile</button><button class="btn" id="ahEdit">Edit</button>
         <a class="btn" href="#/transactions/?account_id=${a.id}">🧾 <span class="hide-s">In Transactions</span></a></div>`;
     if ($('#ahBack')) $('#ahBack').onclick = e => { if (S.invPR && S.invPR.fromList) { e.preventDefault(); S.invPR.fromList = false; history.back(); } };
     $('#ahAdd').onclick = () => openTx(null, after, {account_id: a.id, currency: a.currency});
@@ -114,16 +114,16 @@ VIEWS.account = async (v, rest, ctx = {}) => {
     $('#ahReconcile').onclick = () => reconcileDialog(a);
     $('#ahEdit').onclick = () => acctForm(a);
     if ($('#ahRec')) $('#ahRec').onclick = () => reconcileHistory(a);
-    const lbl = h.start ? `${h.start}${h.end ? ' – ' + h.end : ' – today'}` : (h.end ? `… – ${h.end}` : 'All time 全部');
-    $('#ahSum').innerHTML = `<span>${esc(lbl)}</span><span>${owed ? 'Owed' : 'Balance'} at start 期初 <b>${money(b.opening, a.currency)}</b> → end 期末 <b>${money(b.closing, a.currency)}</b></span>
-      <span>In 流入 <b class="pos">+${num(b.inflow)}</b></span><span>Out 流出 <b class="neg">−${num(b.outflow)}</b></span><span>${h.total} transactions 笔${st.q || st.category_id ? ' (filtered)' : ''}</span>
+    const lbl = h.start ? `${h.start}${h.end ? ' – ' + h.end : ' – today'}` : (h.end ? `… – ${h.end}` : 'All time');
+    $('#ahSum').innerHTML = `<span>${esc(lbl)}</span><span>${owed ? 'Owed' : 'Balance'} at start <b>${money(b.opening, a.currency)}</b> → end <b>${money(b.closing, a.currency)}</b></span>
+      <span>In <b class="pos">+${num(b.inflow)}</b></span><span>Out <b class="neg">−${num(b.outflow)}</b></span><span>${h.total} transactions${st.q || st.category_id ? ' (filtered)' : ''}</span>
       ${h.cash_only ? '<span class="muted">Running balance = cash part (holdings excluded)</span>' : ''}`;
     if (h.invest) invSection(h, a, id); else $('#ahInv').innerHTML = '';
   };
   const list = $('#ahList');
-  const balHdr = () => A && A.is_liability ? 'Owed 欠款' : A && A.is_investment ? 'Cash 现金' : 'Balance 余额';
+  const balHdr = () => A && A.is_liability ? 'Owed' : A && A.is_investment ? 'Cash' : 'Balance';
   const rowHtml = t => `<tr data-tx="${t.id}" style="cursor:pointer"><td class="nowrap small">${esc(t.date.slice(0, 10))}<div class="muted hide-m">${esc(t.date.slice(11, 16))}</div></td>
-    <td><div class="ah-det"><span class="hico-s" aria-hidden="true">${catIcon(t)}</span><div>${t.reconciled_id ? '<span class="rec-badge" title="Reconciled 已对账">✔🔒</span> ' : ''}${txDesc(t)}</div></div></td>
+    <td><div class="ah-det"><span class="hico-s" aria-hidden="true">${catIcon(t)}</span><div>${t.reconciled_id ? '<span class="rec-badge" title="Reconciled">✔🔒</span> ' : ''}${txDesc(t)}</div></div></td>
     <td class="right nowrap ${t.account_effect < 0 ? 'neg' : t.account_effect > 0 ? 'pos' : ''}">${t.account_effect > 0 ? '+' : t.account_effect < 0 ? '−' : ''}${money(Math.abs(t.account_effect), A ? A.currency : undefined)}${t.pr_badge ? `<div><span class="pr-badge pr-${t.pr_class}" title="${esc(t.pr_label || '')}">${t.pr_badge}</span></div>` : ''}</td>
     <td class="right nowrap rb">${t.running_shown === null || t.running_shown === undefined ? '—' : money(t.running_shown, A ? A.currency : undefined)}</td>${A && A.is_investment ? `<td class="right nowrap prc">${t.running_principal === undefined ? '—' : money(t.running_principal, A.currency)}</td><td class="right nowrap prc">${t.running_returns === undefined ? '—' : money(t.running_returns, A.currency)}</td><td class="right nowrap prc">${t.running_unexplained === undefined ? '—' : money(t.running_unexplained, A.currency)}</td>` : ''}</tr>`;
   const NEXT = {'1M': '3M', '3M': '6M', '6M': '1Y', '1Y': '3Y', '3Y': 'ALL', 'YTD': 'ALL', 'CUSTOM': 'ALL'};
@@ -132,12 +132,12 @@ VIEWS.account = async (v, rest, ctx = {}) => {
     append: (h, first) => {
       if (first) {
         head(h);
-        list.innerHTML = h.items.length ? `<div class="scroll-x"><table class="t ah-table"><thead><tr><th>Date</th><th>Details</th><th class="right">Amount</th><th class="right">${balHdr()}</th>${A && A.is_investment ? '<th class="right prc">Principal 本金</th><th class="right prc">Returns 收益</th><th class="right prc">Unexplained 未分类</th>' : ''}</tr></thead><tbody id="ahBody"></tbody></table></div>`
+        list.innerHTML = h.items.length ? `<div class="scroll-x"><table class="t ah-table"><thead><tr><th>Date</th><th>Details</th><th class="right">Amount</th><th class="right">${balHdr()}</th>${A && A.is_investment ? '<th class="right prc">Principal</th><th class="right prc">Returns</th><th class="right prc">Unexplained</th>' : ''}</tr></thead><tbody id="ahBody"></tbody></table></div>`
           : `<div class="empty">No transactions in this period${st.q || st.category_id ? ' matching the filter' : ''}.</div>`;
       }
       if (h.items.length) { $('#ahBody').insertAdjacentHTML('beforeend', h.items.map(rowHtml).join('')); bindTxRows(list, after); }
     },
-    endHtml: st.period === 'ALL' ? 'Start of the account 已到最早' : `Start of the selected period. <button type="button" class="btn sm" data-older>Show older 更早 (${NEXT[st.period] === 'ALL' ? 'All' : NEXT[st.period]})</button>`,
+    endHtml: st.period === 'ALL' ? 'Start of the account' : `Start of the selected period. <button type="button" class="btn sm" data-older>Show older (${NEXT[st.period] === 'ALL' ? 'All' : NEXT[st.period]})</button>`,
   });
   inf.foot.addEventListener('click', e => { if (e.target.closest('[data-older]')) { st.period = NEXT[st.period] || 'ALL'; route(); } });
 };
@@ -150,17 +150,17 @@ function invSection(h, a, id) {
   const box = $('#ahInv');
   box.innerHTML = `<div class="card inv-card" style="margin-top:12px">
     <div class="inv-cards">
-      <div class="ic"><div class="lbl">Current value 当前市值</div><div class="val">${money(x.value, cur)}</div></div>
-      <div class="ic"><div class="lbl">Principal 本金投入</div><div class="val">${money(x.principal, cur)}</div><div class="small muted">net contributions 净投入</div></div>
-      <div class="ic"><div class="lbl">Returns 投资收益</div><div class="val ${x.returns < 0 ? 'neg' : x.returns > 0 ? 'pos' : ''}">${sgn(x.returns, cur)}</div><div class="small ${x.returns < 0 ? 'neg' : 'pos'}">${pctS(x.returns_pct)} of principal</div></div>
-      <div class="ic${Math.abs(x.unexplained) >= 0.01 ? ' unexp' : ''}"><div class="lbl">Unexplained 未分类</div><div class="val">${sgn(x.unexplained, cur)}</div><div class="small muted">${x.correction_count ? `${x.correction_count} unclassified adj. ${money(x.unclassified, cur)}` : 'no unclassified adjustments'}${Math.abs(x.reconciliation_diff) >= 0.01 ? ` · reconciliation diff ${money(x.reconciliation_diff, cur)}` : ''}</div>
-        ${x.correction_count ? '<button class="btn sm" id="ahReclass" style="margin-top:6px">🏷 Reclassify 重新分类…</button>' : ''}</div>
+      <div class="ic"><div class="lbl">Current value</div><div class="val">${money(x.value, cur)}</div></div>
+      <div class="ic"><div class="lbl">Principal</div><div class="val">${money(x.principal, cur)}</div><div class="small muted">net contributions</div></div>
+      <div class="ic"><div class="lbl">Returns</div><div class="val ${x.returns < 0 ? 'neg' : x.returns > 0 ? 'pos' : ''}">${sgn(x.returns, cur)}</div><div class="small ${x.returns < 0 ? 'neg' : 'pos'}">${pctS(x.returns_pct)} of principal</div></div>
+      <div class="ic${Math.abs(x.unexplained) >= 0.01 ? ' unexp' : ''}"><div class="lbl">Unexplained</div><div class="val">${sgn(x.unexplained, cur)}</div><div class="small muted">${x.correction_count ? `${x.correction_count} unclassified adj. ${money(x.unclassified, cur)}` : 'no unclassified adjustments'}${Math.abs(x.reconciliation_diff) >= 0.01 ? ` · reconciliation diff ${money(x.reconciliation_diff, cur)}` : ''}</div>
+        ${x.correction_count ? '<button class="btn sm" id="ahReclass" style="margin-top:6px">🏷 Reclassify</button>' : ''}</div>
     </div>
     <div class="small muted" style="margin-top:6px">Value 市值 = principal 本金 + returns 收益 + unexplained 未分类. Unclassified balance adjustments (Correction/other, e.g. imported 余额变更) stay unexplained until you reclassify them${x.likely_opening_count ? ` — the first record (${money(x.likely_opening_amount, cur)}) is probably the opening balance` : ''}.</div>
     ${x.opening_returns ? `<div class="small muted">Opening balance ${money(x.opening_total, cur)}: ${money(x.opening_total - x.opening_returns, cur)} principal + ${money(x.opening_returns, cur)} prior returns.</div>` : ''}
     <div class="inv-period small" id="ahInvSum"></div>
     <div class="row inv-ctl"><b class="small">Principal vs value 本金 vs 市值</b><span class="sp"></span>
-      <label class="small muted">Granularity <select id="ahIv" style="width:auto"><option value="auto">Auto</option><option value="day">Daily 日</option><option value="week">Weekly 周</option><option value="month">Monthly 月</option></select></label></div>
+      <label class="small muted">Granularity <select id="ahIv" style="width:auto"><option value="auto">Auto</option><option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option></select></label></div>
     <div style="height:240px"><canvas id="ahInvChart"></canvas></div>
     <div class="small muted" style="margin-top:6px">Value = principal + returns + unexplained. Click legend items to hide/show lines. ${esc(x.running_note || '')}</div>
   </div>`;
@@ -172,17 +172,17 @@ function invSection(h, a, id) {
   const draw = sr => {
     const s = sr.summary, P = sr.points;
     $('#ahInvSum').innerHTML = `<span>${esc(sr.from)} – ${esc(sr.to)}</span>
-      <span>Principal 本金 <b>${money(s.start_principal, cur)}</b> → <b>${money(s.end_principal, cur)}</b></span>
-      <span>Contributions 投入 <b class="pos">+${num(s.contributions)}</b>${s.withdrawals ? ` · withdrawals 取出 <b class="neg">−${num(s.withdrawals)}</b>` : ''}</span>
-      <span>Returns 收益 <b class="${s.period_returns < 0 ? 'neg' : 'pos'}">${sgn(s.period_returns, cur)}</b> (cumulative ${money(s.start_returns, cur)} → ${money(s.end_returns, cur)})</span>
-      ${s.start_unexplained || s.end_unexplained ? `<span>Unexplained 未分类 ${money(s.start_unexplained, cur)} → ${money(s.end_unexplained, cur)}</span>` : ''}
-      <span>Return 收益率 <b>${pctS(s.return_pct)}</b> <span class="muted">Modified Dietz, explicit returns only</span></span>`;
+      <span>Principal <b>${money(s.start_principal, cur)}</b> → <b>${money(s.end_principal, cur)}</b></span>
+      <span>Contributions <b class="pos">+${num(s.contributions)}</b>${s.withdrawals ? ` · withdrawals <b class="neg">−${num(s.withdrawals)}</b>` : ''}</span>
+      <span>Returns <b class="${s.period_returns < 0 ? 'neg' : 'pos'}">${sgn(s.period_returns, cur)}</b> (cumulative ${money(s.start_returns, cur)} → ${money(s.end_returns, cur)})</span>
+      ${s.start_unexplained || s.end_unexplained ? `<span>Unexplained ${money(s.start_unexplained, cur)} → ${money(s.end_unexplained, cur)}</span>` : ''}
+      <span>Return <b>${pctS(s.return_pct)}</b> <span class="muted">Modified Dietz, explicit returns only</span></span>`;
     const pr = P.length > 60 ? 0 : 2;
     chart('ahInvChart', {type: 'line', data: {labels: P.map(q => q.date), datasets: [
-      {label: 'Market value 市值', data: P.map(q => q.value), borderColor: '#3a7bd5', backgroundColor: 'rgba(58,123,213,.10)', fill: '+1', tension: .2, pointRadius: pr},
-      {label: 'Principal 本金', data: P.map(q => q.principal), borderColor: '#9aa3b2', backgroundColor: 'rgba(154,163,178,.15)', fill: 'origin', stepped: true, pointRadius: 0},
-      {label: 'Returns 收益', data: P.map(q => q.returns), borderColor: '#14a06f', borderDash: [5, 4], fill: false, tension: .2, pointRadius: pr},
-      {label: 'Unexplained 未分类', data: P.map(q => q.unexplained), borderColor: '#d98c00', borderDash: [2, 3], fill: false, tension: .2, pointRadius: 0}]},
+      {label: 'Market value', data: P.map(q => q.value), borderColor: '#3a7bd5', backgroundColor: 'rgba(58,123,213,.10)', fill: '+1', tension: .2, pointRadius: pr},
+      {label: 'Principal', data: P.map(q => q.principal), borderColor: '#9aa3b2', backgroundColor: 'rgba(154,163,178,.15)', fill: 'origin', stepped: true, pointRadius: 0},
+      {label: 'Returns', data: P.map(q => q.returns), borderColor: '#14a06f', borderDash: [5, 4], fill: false, tension: .2, pointRadius: pr},
+      {label: 'Unexplained', data: P.map(q => q.unexplained), borderColor: '#d98c00', borderDash: [2, 3], fill: false, tension: .2, pointRadius: 0}]},
       options: {interaction: {mode: 'index', intersect: false}, scales: {x: {ticks: {maxTicksLimit: 8}}},
         plugins: {tooltip: {callbacks: {label: c => `${c.dataset.label}: ${money(c.parsed.y, cur)}`}}}}});
   };
