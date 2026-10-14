@@ -11,14 +11,14 @@ from tests.fake_smtp import FakeSMTP
 
 @pytest.fixture
 def smtp():
-    s = FakeSMTP(creds=("bot@example.com", "app-pass-123"))
+    s = FakeSMTP(creds=("bot@example.com", "fixture-pw"))
     yield s
     s.close()
 
 
 def setup_smtp(client, smtp, **kw):
     body = {"smtp_host": "127.0.0.1", "smtp_port": smtp.port, "smtp_security": "none", "smtp_user": "bot@example.com",
-            "smtp_password": "app-pass-123", "smtp_from": "IACF <bot@example.com>", "smtp_to": "a@example.com, b@example.com", **kw}
+            "smtp_password": "fixture-pw", "smtp_from": "IACF <bot@example.com>", "smtp_to": "a@example.com, b@example.com", **kw}
     r = client.put("/api/email/settings", json=body)
     assert r.status_code == 200, r.text
     return r.json()
@@ -125,8 +125,8 @@ def test_fixed_schedule_runs_once_per_slot(db):
 def test_smtp_settings_encrypted_and_test_send(client, db, smtp):
     st = setup_smtp(client, smtp)
     assert st["smtp"]["has_password"] and "smtp_password" not in st["smtp"] and st["smtp"]["configured"]
-    assert db.get_setting("smtp_password_enc") not in ("", "app-pass-123")
-    assert "app-pass-123" not in client.get("/api/email/settings").text
+    assert db.get_setting("smtp_password_enc") not in ("", "fixture-pw")
+    assert "fixture-pw" not in client.get("/api/email/settings").text
     r = client.post("/api/email/test", json={})
     assert r.status_code == 200 and r.json()["ok"]
     m = smtp.messages[-1]
