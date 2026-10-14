@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from urllib.parse import quote
 import logging
 import os
 import re
@@ -23,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import agent_api, config, demo, importers, ingest, ledger, plan_lines, taxtips, principal, projects, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
+from . import agent_api, config, demo, email_reports, mailer, offsite, importers, ingest, ledger, plan_lines, taxtips, principal, projects, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -172,10 +173,10 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     SETTING_KEYS = ["base_currency", "review_threshold", "default_account_id", "default_ledger_id",
                     "backup_interval_hours", "backup_keep", "schedule_run_time", "schedule_catchup_days", "timezone",
                     "lock_reconciled", "receipts_dir", "receipts_pattern",
-                    "reminder_lead_days", "reminder_notify"]
+                    "reminder_lead_days", "reminder_notify", "backup_dir", "backup_receipts"]
     SETTING_DEFAULTS = {"schedule_run_time": "00:15", "schedule_catchup_days": "90", "timezone": schedules.DEFAULT_TZ, "lock_reconciled": "0",
                         "receipts_dir": "", "receipts_pattern": "{yyyy}/{mm}/{dd}",
-                        "reminder_lead_days": "10", "reminder_notify": "off"}
+                        "reminder_lead_days": "10", "reminder_notify": "off", "backup_dir": "", "backup_receipts": "1"}
 
     @app.get("/api/meta")
     def meta():
@@ -246,6 +247,13 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                 if k == "schedule_catchup_days":
                     if not str(v).isdigit() or not 0 <= int(v) <= 3650:
                         raise HTTPException(400, "Catch-up days must be 0–3650")
+                if k == "backup_dir":
+                    try:
+                        v = bk.check_dir(str(v or ""))
+                    except ValueError as e:
+                        raise HTTPException(400, str(e))
+                if k == "backup_receipts":
+                    v = "0" if str(v).lower() in ("0", "false", "off", "no", "") else "1"
                 if k == "receipts_pattern":
                     try:
                         v = receipts.validate_pattern(str(v or ""))
@@ -1371,6 +1379,54 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         except ValueError as e:
             raise HTTPException(400, str(e))
 
+    # ------------------------------------------------------------ off-site backup, SMTP, emailed reports (all OFF by default)
+    def _cfg_err(fn):
+        try:
+            return fn()
+        except (ValueError, mailer.MailError) as e:
+            return JSONResponse({"ok": False, "detail": str(e), "message": str(e)}, status_code=400)
+
+    @app.get("/api/offsite")
+    def offsite_get():
+        return offsite.status(db)
+
+    @app.put("/api/offsite")
+    def offsite_put(body: dict = Body(...)):
+        return _cfg_err(lambda: offsite.update(db, body))
+
+    @app.post("/api/offsite/run")
+    def offsite_run():
+        return offsite.run(db, "manual")
+
+    @app.get("/api/email/settings")
+    def email_get():
+        return email_reports.status(db)
+
+    @app.put("/api/email/settings")
+    def email_put(body: dict = Body(...)):
+        def go():
+            mailer.update(db, secret, {k: v for k, v in body.items() if k.startswith("smtp_") or k == "clear_password"})
+            return email_reports.update(db, {k: v for k, v in body.items() if k.startswith("email_")})
+        return _cfg_err(go)
+
+    @app.post("/api/email/test")
+    def email_test(body: dict | None = Body(None)):
+        b = body or {}
+        return _cfg_err(lambda: email_reports.test_send(db, secret, b.get("to"), b.get("lang")))
+
+    @app.get("/api/email/preview")
+    def email_preview(kind: str = "weekly", lang: str | None = None):
+        if kind not in email_reports.JOBS:
+            raise HTTPException(400, f"kind must be one of {', '.join(email_reports.JOBS)}")
+        m = email_reports.build(db, kind, lng=lang)
+        return HTMLResponse(m["html"], headers={"X-Subject": quote(m["subject"])})
+
+    @app.post("/api/email/send")
+    def email_send_now(kind: str = "weekly"):
+        if kind not in email_reports.JOBS:
+            raise HTTPException(400, f"kind must be one of {', '.join(email_reports.JOBS)}")
+        return _cfg_err(lambda: email_reports.send_job(db, secret, kind))
+
     @app.get("/api/networth")
     def networth(months: int = 12):
         return {"current": ledger.net_worth(db), "history": ledger.networth_history(db, months)}
@@ -1709,6 +1765,12 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                     if bk.backup_due(db):
                         bk.make_backup(db, "auto")
                         bk.upload_latest(db)
+                    slot = offsite.due(db)  # off-site (Google Drive) backup: off unless enabled
+                    if slot:
+                        r = offsite.run(db, "schedule", slot)
+                        log.info("off-site backup: %s", r.get("detail"))
+                    for r in email_reports.run_due(db, secret):  # emailed reports/reminders: off unless enabled
+                        log.info("email %s: %s", r["job"], "ok" if r.get("ok") else r.get("error") or r.get("reason"))
                     for mb in ingest.due_mailboxes(db):
                         ingest.poll_mailbox(db, mb, secret)
                     if time.monotonic() - rem_last[0] > 600:  # reminders: generate + auto-complete (idempotent)
