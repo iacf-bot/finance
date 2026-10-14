@@ -590,9 +590,13 @@ API:
 - Saved photos are attached to the transaction and show as thumbnails in its detail view. When you delete a transaction, you choose whether its photos are deleted too or kept.
 - **OCR runs only on your machine.** No cloud service is used. Without Tesseract, photos are still stored and you type the details yourself. `GET /api/receipts/status` reports what's available.
   - Linux: `apt install tesseract-ocr tesseract-ocr-chi-sim`. Windows: see RUN_ON_WINDOWS.md.
+  - Optional, for better results on phone photos: `pip install opencv-python-headless`.
+  - **Thermal paper** (most store receipts) fades and curls. Photograph it flat, in even bright light, without flash glare or shadows, filling the frame. Old faded receipts may still need manual fixes.
   - HEIC works when `pillow-heif` is installed. Otherwise use JPEG (iPhone: Settings → Camera → Formats → Most Compatible).
 - **How the text is parsed:**
   - Total: an amount on a TOTAL / Amount Due / Grand Total / 合计 / 实付 / 应付 line, skipping subtotal/tax/tip/change/discount lines. Without such a line, the largest amount is used, at low confidence.
+  - Subtotal / tax / tip / service charge (Subtotal/小计, Tax/Sales Tax/VAT/GST/税/税额, Tip/Gratuity/小费, Service charge/服务费) are read when printed. "Suggested tip" tables and "incl. tax" / "Tax ID" lines are ignored. When subtotal + tax + tip adds up to the total, confidence goes up. A tip written below the printed total is added to it. Values that aren't on the receipt stay empty (never 0). The form's Tax & tip fields are filled with what was found; a service charge counts as tip.
+  - OCR runs several passes: autocontrast, denoise, and (with `opencv-python-headless` installed) deskew + CLAHE contrast + adaptive threshold + despeckle. Each uses Tesseract page modes 4/6/11 and a 2× upscale. The pass whose parsed result scores best wins (`parsed.ocr_pass` shows which); a clean read stops after one pass.
   - Dates: `2026-10-03`, `2026年10月3日`, `10/03/2026`, `Oct 3, 2026`, plus a time if one is printed.
   - Merchant: the first meaningful top line.
   - Currency: from ¥/￥/元/$/€/£.
@@ -726,3 +730,44 @@ A project's budget plan is a list of lines you name yourself (for a trip: Flight
 - **Assigning a line:** pick it in the transaction form after choosing a project, or use quick add: `#p:日本旅行/Flights` or `#p:"Japan trip"/"Hotel"`. Unique prefixes work.
 - **API:** `GET/POST /api/projects/{id}/plan-lines`, `PUT/DELETE /api/projects/{id}/plan-lines/{line}`, `POST …/plan-lines/reorder`, `POST …/plan-lines/template`, `POST …/plan-lines/copy`, `GET …/plan-lines/{line|unplanned}/transactions`, and `GET /api/plan-templates`.
 - **Older category plans** (`/api/projects/{id}/plan`) were copied into lines once, one line per category. Their original rows are kept, and that endpoint keeps working: it mirrors its changes into the lines.
+
+## Tax & tips 税/小费 (optional)
+- **Amount is always the charged total.** Tax and tip are optional breakouts of it (Tax & tip box in the form, for expense/income/refund). Subtotal = amount − tax − tip. Blank means "not recorded" (stored as null, not 0), and tax + tip can't exceed the amount.
+- Enter amounts or percentages. A tip % or tax rate is applied to the subtotal (`Tip %` fills the tip; `Tax rate %` fills the tax when it's empty).
+- Quick add: `dinner 118 tip 18% chase`, `lunch 25 tax 2.10 tip 4 cash`, `午饭 100 小费 10 税 8 支付宝`.
+- Reports → **Tax & tips**: tax, tips, tax % and tip % by month/category/merchant/project/account, with a chart. Home and dashboard show a Tax & tips card for the month when any were recorded. All of these sum only transactions where tax/tip was recorded. Tip % = tips ÷ subtotal of the tipped transactions.
+- API: `tax_amount`, `tip_amount`, `tax_rate` on `/api/transactions` (null when blank); filters `has_tax=1|0`, `has_tip=1|0`; `GET /api/reports/tax-tips?start=&end=&group_by=month|category|subcategory|merchant|project|account&kind=expense|income`. CSV export adds `tax_amount, tip_amount, tax_rate, subtotal`.
+
+## Agent API — `POST /api/agent/transactions`
+One forgiving endpoint for AI agents, scripts and Shortcuts (`X-API-Key` header). It takes names instead of ids and answers with a short `message` plus the new `id`.
+
+| Field | Notes |
+|---|---|
+| `account` | id, name, alias, or last 4 digits (`"4321"`). Omit to use the default account. `last4` also works. |
+| `amount` | Charged total (a negative number is treated as spending). Optional when a readable receipt is attached. |
+| `kind` | `expense` (default), `income`, `refund`, `transfer` (+ `to_account`). |
+| `date` | `2026-10-05` or `2026-10-05 12:30`; default now (or the receipt date). |
+| `currency` | e.g. `CNY` when it differs from the account currency (converted like the form). |
+| `merchant`, `note`, `tags` | Free text. |
+| `category` | id or name (English or 中文), or `"Food > Dining"`. Unknown → uncategorized plus a warning. |
+| `project`, `plan_line` | Project by id/name (a new name creates the project); plan line by id/name within it. |
+| `tax`, `tip` | Optional: `2.50` or `"18%"` (of the subtotal). Omit to leave them empty. `tax_rate` optional. |
+| `person` | Family member. |
+| `reimbursable` | `true` to track it in Reimbursements. |
+| `review` | `true` to put it in To review instead of posting. |
+| `receipt` | Base64 image (JSON) or a file part (multipart, any field name). `receipt_ids` links already-uploaded receipts. |
+
+```bash
+# JSON
+curl -s -X POST http://localhost:8000/api/agent/transactions -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"account":"4321","amount":58.40,"merchant":"Sample Bistro","category":"Dining","tax":4.10,"tip":"18%","note":"team lunch"}'
+# → {"ok":true,"id":123,"message":"Recorded expense: Sample Bistro $58.40 (tax $4.10, tip $8.28) · Visa (#123)","transaction":{…},"warnings":[]}
+
+# multipart with a receipt photo (amount/merchant/date/tax/tip are read from it when omitted)
+curl -s -X POST http://localhost:8000/api/agent/transactions -H "X-API-Key: $KEY" -F account=Visa -F receipt=@receipt.jpg
+```
+Errors return HTTP 400 with `{"ok": false, "message": "..."}` (e.g. an ambiguous account lists the candidates). Add `Accept-Language: zh-CN` (or `?lang=zh`) for Chinese messages.
+
+**Prompt hint for an agent:**
+> To record a purchase, POST JSON to `/api/agent/transactions` with header `X-API-Key`. Required: `amount` (charged total) and `account` (name or last 4 digits). Add `merchant`, `category`, `date` (YYYY-MM-DD), `note` when known. Include `tax`/`tip` only if they appear on the receipt or the user said them; never guess them or send 0. For a photo, send it as `receipt` (base64) and omit fields you can't read. Show the user the `message` from the response; if `ok` is false, fix the field it names and retry once.
+

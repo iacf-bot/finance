@@ -357,6 +357,11 @@ class Database:
                 PRIMARY KEY (line_id, category_id))""")
             if "plan_line_id" not in {r[1] for r in con.execute("PRAGMA table_info(transactions)")}:
                 con.execute("ALTER TABLE transactions ADD COLUMN plan_line_id INTEGER")
+            # tax / tip 税 / 小费 (additive, optional: NULL = not recorded, never 0)
+            tcols = {r[1] for r in con.execute("PRAGMA table_info(transactions)")}
+            for col in ("tax_amount", "tip_amount", "tax_rate"):
+                if col not in tcols:
+                    con.execute(f"ALTER TABLE transactions ADD COLUMN {col} REAL")
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_plan_line ON transactions(plan_line_id)")
             # one-time: copy each category plan (project_budgets, left untouched) into lines, one per category
             if not con.execute("SELECT 1 FROM settings WHERE key='migr_plan_lines'").fetchone():

@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import config, demo, importers, ingest, ledger, plan_lines, principal, projects, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
+from . import agent_api, config, demo, importers, ingest, ledger, plan_lines, taxtips, principal, projects, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -746,6 +746,38 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         log.warning("receipt upload rejected (%s): %s", code, msg)
         return JSONResponse({"ok": False, "detail": msg, "message": "Receipt not saved: " + msg}, status_code=code)
 
+    @app.post("/api/agent/transactions")
+    async def agent_transaction(request: Request):
+        """For AI agents / scripts: JSON (optional base64 'receipt') or multipart (fields + a file). Names instead of
+        ids; optional tax/tip ("2.50" or "18%"). Returns {ok, id, message, transaction, warnings}; errors {detail, message}."""
+        ctype = (request.headers.get("content-type") or "").lower()
+        files: list = []
+        try:
+            if "multipart/" in ctype or "form-urlencoded" in ctype:
+                form = await request.form()
+                body: dict = {}
+                for k, v in form.multi_items():
+                    if hasattr(v, "read"):
+                        data = await v.read()
+                        if data:
+                            files.append((data, getattr(v, "filename", "") or ""))
+                    elif k in ("receipt_ids",):
+                        body.setdefault(k, []).extend(int(x) for x in str(v).split(",") if x.strip().isdigit())
+                    else:
+                        body[k] = v
+            else:
+                raw = await request.body()
+                body = json.loads(raw.decode("utf-8-sig") or "{}") if raw.strip() else {}
+                if not isinstance(body, dict):
+                    raise agent_api.AgentError("Send a JSON object")
+            out = agent_api.create(db, body, files)
+        except (ValueError, agent_api.AgentError, ledger.ValidationError, receipts.ReceiptError) as e:
+            msg = str(e) if not isinstance(e, json.JSONDecodeError) else "Body is not valid JSON"
+            return JSONResponse({"ok": False, "detail": msg, "message": msg}, status_code=400)
+        except KeyError as e:
+            return JSONResponse({"ok": False, "detail": f"Not found: {e}", "message": f"Not found: {e}"}, status_code=400)
+        return out
+
     @app.post("/api/receipts")
     async def upload_receipts(request: Request, auto_post: bool = False, account_id: int | None = None,
                               ledger_id: int | None = None):
@@ -1324,6 +1356,20 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         return {"rows": ledger.breakdown(db, start, end_excl, group_by, kind, ledger_id, project_id),
                 "totals": ledger.totals(db, start, end_excl, ledger_id, project_id), "start": start, "end": end,
                 "project_id": project_id}
+
+    @app.get("/api/reports/tax-tips")
+    def tax_tips(start: str | None = None, end: str | None = None, group_by: str = "month", kind: str = "expense",
+                 ledger_id: int | None = None, project_id: int | None = None):
+        """Tax & tips 税/小费 paid (or, kind=income, received): only transactions where they were recorded."""
+        today = date.today()
+        start = start or f"{today.year}-01-01"
+        end_excl = (end + " 99") if end else f"{today.year + 1}-01-01"
+        if kind not in ("expense", "income", "all"):
+            raise HTTPException(400, "kind must be expense, income or all")
+        try:
+            return taxtips.summary(db, start, end_excl, group_by, kind, ledger_id, project_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.get("/api/networth")
     def networth(months: int = 12):

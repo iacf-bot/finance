@@ -228,10 +228,13 @@ def export_csv(rows: list[dict]) -> str:
     buf = io.StringIO()
     cols = ["id", "date", "kind", "amount", "currency", "account_name", "to_account_name", "to_amount",
             "parent_category_name", "category_name", "merchant_name", "member_name", "project_name", "tags", "note",
-            "source", "status", "ticker", "shares", "price", "fee", "orig_amount", "orig_currency", "ledger_name"]
+            "source", "status", "ticker", "shares", "price", "fee", "orig_amount", "orig_currency", "ledger_name", "tax_amount", "tip_amount", "tax_rate", "subtotal"]
     w = csv.writer(buf)
     w.writerow(cols)
     for r in rows:
+        r = dict(r)
+        if r.get("tax_amount") is not None or r.get("tip_amount") is not None:  # blank when neither was recorded
+            r["subtotal"] = round((r.get("amount") or 0) - (r.get("tax_amount") or 0) - (r.get("tip_amount") or 0), 2)
         w.writerow(["" if r.get(c) is None else r.get(c) for c in cols])
     return "\ufeff" + buf.getvalue()
 

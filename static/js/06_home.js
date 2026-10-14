@@ -39,6 +39,9 @@ VIEWS.home = async (v) => {
     $('#hmCards').innerHTML = card('Income', s.income, 'pos') + card('Expense', s.expense, 'neg')
       + card('Net', s.net, s.net >= 0 ? 'pos' : 'neg', `<div class="small muted">${s.count} transactions</div>`)
       + card('Investment income', s.investment_income, s.investment_income >= 0 ? 'pos' : 'neg', '<div class="small muted">not part of income/expense</div>');
+    return api(`/api/reports/tax-tips?start=${month}-01&end=${month}-31${lq}`).then(tt => {  // only when recorded
+      const x = tt.totals; if (x.tax_count || x.tip_count) $('#hmCards .card.stat:nth-child(2)')?.insertAdjacentHTML('beforeend', taxTipLine(x, tt.currency));
+    }).catch(() => {});
   }).catch(e => toast(e.message, true));
   const ym = month.split('-').map(Number);
   $('#hmPrev').onclick = () => go(ym[1] > 1 ? `${ym[0]}-${String(ym[1] - 1).padStart(2, '0')}` : `${ym[0] - 1}-12`);
@@ -193,4 +196,12 @@ function invSection(h, a, id) {
     if (h.start) q.set('from', h.start); if (h.end) q.set('to', h.end);
     draw(await guard(() => api(`/api/accounts/${id}/investment-series?` + q)));
   };
+}
+
+// Tax & tips 税/小费 KPI line (inside the Expense card): only transactions where they were recorded
+function taxTipLine(x, cur) {
+  const parts = [];
+  if (x.tax_count) parts.push(`<span>Tax</span> ${money(x.tax, cur)}${x.tax_pct != null ? ` (${x.tax_pct}%)` : ''}`);
+  if (x.tip_count) parts.push(`<span>Tips</span> ${money(x.tip, cur)}${x.tip_pct != null ? ` (${x.tip_pct}%)` : ''}`);
+  return `<div class="small tt-kpi" title="Tax & tips recorded this month (only transactions where they were entered)"><a href="#/reports">🧾 ${parts.join(' · ')}</a></div>`;
 }

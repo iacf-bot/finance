@@ -64,7 +64,61 @@ def ocr_status() -> dict:
     return {"available": True, "version": ver, "languages": langs, "message": msg}
 
 
-def ocr_image(img, denoise: bool = False) -> tuple[str, float | None]:
+def _preprocess(img, variant: str = "plain", scale: float = 1.0):
+    """Grayscale image prepared for Tesseract. Variants: plain (autocontrast), denoise (median), binar (OpenCV deskew +
+    CLAHE contrast + adaptive threshold; falls back to PIL autocontrast+threshold when OpenCV isn't installed)."""
+    from PIL import ImageFilter, ImageOps
+    g = ImageOps.exif_transpose(img).convert("L")
+    target = 1600 * scale  # Tesseract likes ~30px glyphs: upscale small photos (multi-scale via `scale`)
+    if max(g.size) < target:
+        f = target / max(g.size)
+        g = g.resize((int(g.width * f), int(g.height * f)))
+    if variant == "denoise":  # median filter removes speckle (but blurs small clean text)
+        g = g.filter(ImageFilter.MedianFilter(3))
+    if variant == "binar":
+        try:
+            import cv2
+            import numpy as np
+            a = np.array(g)
+            a = cv2.fastNlMeansDenoising(a, None, 10, 7, 21)
+            a = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(a)
+            a = _deskew(cv2, np, a)
+            a = cv2.adaptiveThreshold(a, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15)
+            a = _despeckle(cv2, np, cv2.medianBlur(a, 3))
+            from PIL import Image
+            return Image.fromarray(a)
+        except Exception:  # noqa: BLE001  no OpenCV / odd image: PIL-only binarization
+            g = ImageOps.autocontrast(g.filter(ImageFilter.MedianFilter(3)), cutoff=2)
+            return g.point(lambda v: 255 if v > 150 else 0)
+    return ImageOps.autocontrast(g)
+
+
+def _despeckle(cv2, np, a):
+    """Drop isolated dark specks (paper texture, sensor noise) much smaller than a period at this resolution."""
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(255 - a, connectivity=8)
+    min_area = max(4, int((a.shape[0] / 300) ** 2))
+    small = np.where(stats[1:, cv2.CC_STAT_AREA] < min_area)[0] + 1
+    if len(small):
+        a = a.copy(); a[np.isin(lab, small)] = 255
+    return a
+
+
+def _deskew(cv2, np, a):
+    """Rotate a slightly tilted receipt photo straight (angle of the text pixels' min-area rectangle, |angle| ≤ 15°)."""
+    inv = cv2.threshold(a, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+    pts = np.column_stack(np.where(inv > 0))
+    if len(pts) < 50:
+        return a
+    ang = cv2.minAreaRect(pts[:, ::-1].astype(np.float32))[-1]
+    ang = ang - 90 if ang > 45 else ang
+    if abs(ang) < 0.5 or abs(ang) > 15:
+        return a
+    h, w = a.shape
+    m = cv2.getRotationMatrix2D((w / 2, h / 2), ang, 1.0)
+    return cv2.warpAffine(a, m, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+
+def ocr_image(img, denoise: bool = False, psm: int = 4, variant: str | None = None, scale: float = 1.0) -> tuple[str, float | None]:
     """(text, mean word confidence 0..1) for a PIL image; ('', None) when OCR is unavailable."""
     if img is None:
         return "", None
@@ -72,16 +126,9 @@ def ocr_image(img, denoise: bool = False) -> tuple[str, float | None]:
     if not st["available"]:
         return "", None
     import pytesseract
-    from PIL import ImageFilter, ImageOps
-    g = ImageOps.exif_transpose(img).convert("L")
-    if denoise:  # second pass for noisy photos: median filter removes speckle (but blurs small clean text)
-        g = g.filter(ImageFilter.MedianFilter(3))
-    if max(g.size) < 1600:  # small photos: upscale, Tesseract likes ~30px glyphs
-        f = 1600 / max(g.size)
-        g = g.resize((int(g.width * f), int(g.height * f)))
-    g = ImageOps.autocontrast(g)
+    g = _preprocess(img, variant or ("denoise" if denoise else "plain"), scale)
     langs = "+".join(l for l in ("eng", "chi_sim") if l in st["languages"]) or "eng"
-    data = pytesseract.image_to_data(g, lang=langs, config="--psm 4", output_type=pytesseract.Output.DICT)
+    data = pytesseract.image_to_data(g, lang=langs, config=f"--psm {psm}", output_type=pytesseract.Output.DICT)
     lines: dict = {}
     confs = []
     for i, w in enumerate(data["text"]):
@@ -97,6 +144,39 @@ def ocr_image(img, denoise: bool = False) -> tuple[str, float | None]:
             pass
     text = "\n".join(_join_words(ws) for _, ws in sorted(lines.items()))
     return text, (round(sum(confs) / len(confs) / 100, 2) if confs else None)
+
+
+# (variant, psm, scale) tried in order; stops early once a read is clearly good
+OCR_PASSES = [("plain", 4, 1.0), ("plain", 6, 1.0), ("binar", 4, 1.0), ("denoise", 4, 1.0), ("binar", 6, 1.0),
+              ("plain", 11, 1.0), ("plain", 4, 2.0)]
+
+
+def _score(parsed: dict, ocr_conf: float | None) -> float:
+    return parsed["confidence"] + 0.25 * (ocr_conf or 0) + (0.1 if parsed.get("total") is not None else 0)
+
+
+def ocr_best(img, max_passes: int | None = None) -> tuple[str, float | None, dict]:
+    """Multi-pass OCR (preprocessing variants × page-segmentation modes × scales); keeps the pass whose parsed
+    result scores best (receipt-field confidence + OCR word confidence). Returns (text, ocr_conf, info)."""
+    if img is None or not ocr_status()["available"]:
+        return "", None, {"passes": 0}
+    best = ("", None, -1.0, None)
+    tried = []
+    for n, (var, psm, sc) in enumerate(OCR_PASSES[:max_passes or len(OCR_PASSES)]):
+        try:
+            text, conf = ocr_image(img, psm=psm, variant=var, scale=sc)
+        except Exception:  # noqa: BLE001  one failing pass shouldn't sink the others
+            continue
+        p = parse_receipt(text) if text else None
+        sc_ = _score(p, conf) if p else 0.0
+        tried.append(f"{var}/psm{psm}/x{sc:g}={sc_:.2f}")
+        if sc_ > best[2]:
+            best = (text, conf, sc_, f"{var}/psm{psm}/x{sc:g}")
+        if p and p["confidence"] >= 0.8 and p.get("checked") and (conf or 0) >= 0.75:
+            break  # totals cross-check and words read cleanly: good enough
+        if n >= 1 and best[2] >= 1.05:
+            break
+    return best[0], best[1], {"passes": len(tried), "best": best[3], "tried": tried}
 
 
 def _join_words(ws: list[str]) -> str:
@@ -129,6 +209,52 @@ NOT_MERCHANT = re.compile(r"(receipt|invoice|发票|小票|欢迎|welcome|thank|
                           r"order|订单|date|日期|time|时间|cashier|收银|store\s*#|地址|address)", re.I)
 
 
+SUBTOTAL_RX = re.compile(r"(sub\s*-?\s*total|小\s*计)", re.I)
+TAX_RX = re.compile(r"(\b(?:sales\s*|state\s*|city\s*|local\s*)?tax(?:es)?\b|\bvat\b|\bgst\b|\bhst\b|\bpst\b|\bqst\b|税\s*额|税\s*金|税\s*费|增值税|(?<![免含])税(?![号务]))", re.I)
+TAX_NOT = re.compile(r"(before\s*tax|pre-?\s*tax|incl\.?\s*tax|including\s*tax|excl\.?\s*tax|tax\s*(id|no|invoice|#|exempt)|含税|不含税|税号|税务)", re.I)
+TIP_RX = re.compile(r"(\btips?\b|gratuity|小\s*费)", re.I)
+TIP_NOT = re.compile(r"(suggest|guide|建议|tip\s*not|no\s*tip|\btip\s*%?\s*options?)", re.I)
+SVC_RX = re.compile(r"(service\s*(?:charge|fee)|svc\s*chg|服务费)", re.I)
+
+
+def _line_amount(lines: list[str], i: int) -> float | None:
+    """Last amount on line i, or on the next line when the label stands alone (and that line isn't another label)."""
+    amts = [_amt(m) for m in AMT_RX.finditer(lines[i])]
+    if not amts and i + 1 < len(lines) and not (TOTAL_KW.search(lines[i + 1]) or SKIP_KW.search(lines[i + 1])):
+        amts = [_amt(m) for m in AMT_RX.finditer(lines[i + 1])]
+    return amts[-1] if amts else None
+
+
+def _breakdown(lines: list[str]) -> dict:
+    """Subtotal / tax / tip / service charge actually printed on the receipt (None when not found, never 0 by default)."""
+    out: dict = {"subtotal": None, "tax": None, "tip": None, "service": None}
+    taxes = []
+    for i, l in enumerate(lines):
+        if SUBTOTAL_RX.search(l):
+            v = _line_amount(lines, i)
+            if v is not None:
+                out["subtotal"] = v
+            continue
+        if SVC_RX.search(l):
+            v = _line_amount(lines, i)
+            if v is not None:
+                out["service"] = round((out["service"] or 0) + v, 2)
+            continue
+        if TIP_RX.search(l) and not TIP_NOT.search(l) and l.count("%") <= 1:
+            v = _line_amount(lines, i)
+            if v is not None:
+                out["tip"] = v
+            continue
+        is_total = TOTAL_KW.search(l) and not re.search(r"(total\s*tax|tax\s*total)", l, re.I)
+        if TAX_RX.search(l) and not TAX_NOT.search(l) and not is_total:
+            v = _line_amount(lines, i)
+            if v is not None:
+                taxes.append(v)
+    if taxes:  # several tax lines (state + city…) add up; a printed "total tax" equal to their sum is not double-counted
+        out["tax"] = round(max(taxes) if len(taxes) > 1 and abs(max(taxes) * 2 - sum(taxes)) < 0.011 else sum(taxes), 2)
+    return out
+
+
 def _amt(m: re.Match) -> float:
     return float(m.group(1).replace(",", "").replace("，", "") + "." + m.group(2))
 
@@ -143,7 +269,7 @@ def parse_receipt(text: str, today: datetime | None = None) -> dict:
     # --- total: amount on (or right after) a TOTAL-like line, skipping subtotal/tax/tip/change lines
     cands = []
     for i, l in enumerate(lines):
-        if TOTAL_KW.search(l) and not (SKIP_KW.search(l) and not STRONG_KW.search(l)):
+        if TOTAL_KW.search(l) and not (SKIP_KW.search(TAX_NOT.sub(" ", l)) and not STRONG_KW.search(l)):
             amts = [_amt(m) for m in AMT_RX.finditer(l)]
             if not amts and i + 1 < len(lines) and not TOTAL_KW.search(lines[i + 1]):
                 amts = [_amt(m) for m in AMT_RX.finditer(lines[i + 1])]
@@ -157,6 +283,29 @@ def parse_receipt(text: str, today: datetime | None = None) -> dict:
         allamts = [(_amt(m), l) for l in lines if not SKIP_KW.search(l) for m in AMT_RX.finditer(l)]
         if allamts:
             total = max(a for a, _ in allamts); conf += 0.15; reasons.append("total = largest amount (no TOTAL line)")
+    # --- subtotal / tax / tip / service charge, and the sum cross-check
+    bd = _breakdown(lines)
+    parts = [bd[k] for k in ("tax", "tip", "service")]
+    checked = False
+    if bd["subtotal"] is not None and any(x is not None for x in parts):
+        expect = round(bd["subtotal"] + sum(x or 0 for x in parts), 2)
+        no_tip = round(expect - (bd["tip"] or 0), 2)
+        if total is not None and abs(expect - total) <= 0.021:
+            checked = True; conf += 0.15; reasons.append("subtotal + tax/tip adds up to the total ✓")
+        elif total is not None and bd["tip"] is not None and abs(no_tip - total) <= 0.021:
+            total = expect; checked = True; conf += 0.1  # tip written after the printed total: the charge includes it
+            reasons.append("printed total excludes the tip: total = total + tip")
+        elif total is None:
+            total = expect; conf += 0.2; reasons.append("total = subtotal + tax/tip (no TOTAL line)")
+        elif total is not None:
+            conf -= 0.05; reasons.append(f"subtotal + tax/tip = {expect} ≠ total {total}: check the amounts")
+    elif total is not None and bd["subtotal"] is not None and abs(bd["subtotal"] - total) <= 0.021 and not any(parts):
+        checked = True; conf += 0.05
+    if total is not None and (bd["tax"] or 0) + (bd["tip"] or 0) + (bd["service"] or 0) > total + 0.01:
+        bd.update(tax=None, tip=None, service=None); reasons.append("tax/tip larger than the total: ignored")
+    for k in ("tax", "tip", "service"):
+        if bd[k] is not None:
+            reasons.append(f"{k} {bd[k]}")
     # --- currency
     cur = None
     for sym, code in CUR_SYM:
@@ -201,7 +350,8 @@ def parse_receipt(text: str, today: datetime | None = None) -> dict:
         clean = re.sub(r"[^\w\u3400-\u9fff&'\[\] .-]", "", l).strip(" .-")
         if len(re.sub(r"[\W\d_]", "", clean)) >= 2 and not NOT_MERCHANT.search(l) and not AMT_RX.search(l):
             merchant = clean[:60]; conf += 0.15; reasons.append(f"merchant '{merchant}' (top line)"); break
-    return {"total": total, "currency": cur, "date": date_s, "merchant": merchant, "confidence": round(min(conf, 0.95), 2),
+    return {"total": total, "currency": cur, "date": date_s, "merchant": merchant, "confidence": round(max(min(conf, 0.95), 0), 2),
+            "subtotal": bd["subtotal"], "tax": bd["tax"], "tip": bd["tip"], "service": bd["service"], "checked": checked,
             "reasons": reasons, "lines": lines[:60]}
 
 
@@ -399,15 +549,11 @@ def _dumps(x) -> str:
 def save_upload(db: Database, data: bytes, name: str = "") -> dict:
     """Stores one image (dated today until linked), runs OCR. Returns the receipt row + parsed fields."""
     img, blob, ext = load_image(data, name)
-    text, ocr_conf = ocr_image(img)
-    if text is not None and ocr_conf is not None:
-        first = parse_receipt(text)
-        if first["confidence"] < 0.5 or first["total"] is None:  # poor read: retry denoised, keep the better one
-            t2, c2 = ocr_image(img, denoise=True)
-            if parse_receipt(t2)["confidence"] > first["confidence"]:
-                text, ocr_conf = t2, c2
+    text, ocr_conf, info = ocr_best(img)  # several preprocess/psm passes, best-scoring read wins
     parsed = parse_receipt(text) if text else {"total": None, "currency": None, "date": None, "merchant": None,
                                                  "confidence": 0.0, "reasons": [], "lines": []}
+    if info.get("best"):
+        parsed["ocr_pass"] = info["best"]
     with db.tx() as con:
         rid = con.execute("""INSERT INTO receipts(orig_name, mime, size, sha256, ocr_text, ocr_confidence, parsed, rel_path)
             VALUES(?,?,?,?,?,?,?,'')""", (name[:200], f"image/{'jpeg' if ext == 'jpg' else ext}", len(blob),

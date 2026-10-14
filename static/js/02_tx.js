@@ -22,6 +22,9 @@ VIEWS.dashboard = async (v) => {
     <div class="card"><h3>Recent activity<span class="sp"></span><a class="small" href="#/transactions">All →</a></h3>${txTable(d.recent, {compact: true})}</div>
   </div>`;
   bindTxRows(v);
+  api(`/api/reports/tax-tips?start=${d.month}-01&end=${d.month}-31${S.ledger ? '&ledger_id=' + S.ledger : ''}`).then(tt => {
+    const x = tt.totals; if (x.tax_count || x.tip_count) $('.grid.g4 .card.stat:nth-child(3)', v)?.insertAdjacentHTML('beforeend', taxTipLine(x, tt.currency));
+  }).catch(() => {});
   if (d.by_category.length) chart('cPie', {type: 'doughnut', data: {labels: d.by_category.map(x => x.name), datasets: [{data: d.by_category.map(x => x.amount), backgroundColor: PALETTE}]}, options: {plugins: {legend: {position: innerWidth < 760 ? 'bottom' : 'right'}}}});
   chart('cTrend', {type: 'bar', data: {labels: d.trend.map(x => x.month.slice(2)), datasets: [{label: 'Income', data: d.trend.map(x => x.income), backgroundColor: '#14a06f'}, {label: 'Expense', data: d.trend.map(x => x.expense), backgroundColor: '#e8553e'}, {type: 'line', label: 'Investment income', data: d.trend.map(x => x.investment_income || 0), borderColor: '#8a5cd6', backgroundColor: '#8a5cd6', pointRadius: 2, tension: .25}]}});
   chart('cNW', {type: 'line', data: {labels: d.networth_history.map(x => x.month.slice(2)), datasets: [{label: 'Net worth', data: d.networth_history.map(x => x.net_worth), borderColor: '#3a7bd5', backgroundColor: 'rgba(58,123,213,.12)', fill: true, tension: .25}, {label: 'Liabilities', data: d.networth_history.map(x => x.liabilities), borderColor: '#e0483a', borderDash: [4, 4], tension: .25}]}});
@@ -86,6 +89,7 @@ VIEWS.transactions = async (v, rest) => {
     <select name="project_id">${listOptions(m.projects, f.project_id, 'All projects')}</select>
     <input name="tag" placeholder="Tag" value="${esc(f.tag || '')}">
     <select name="source"><option value="">Any source</option>${['web', 'api', 'email', 'bot', 'message', 'import', 'balance_set', 'opening_balance', 'scheduled', 'reconcile'].map(s => `<option value="${s}" ${f.source === s ? 'selected' : ''}>${srcLabel[s] || s}</option>`).join('')}</select>
+    <select name="has_taxtip"><option value="">Tax/tip: any</option><option value="tax" ${f.has_tax === '1' ? 'selected' : ''}>With tax</option><option value="tip" ${f.has_tip === '1' ? 'selected' : ''}>With tip</option></select>
     <select name="reconciled"><option value="">Reconciled or not</option><option value="1" ${f.reconciled === '1' ? 'selected' : ''}>✔ Reconciled</option><option value="0" ${f.reconciled === '0' ? 'selected' : ''}>Not reconciled</option></select>
     <div class="row"><button class="btn pri">Filter</button><button type="button" class="btn" id="fReset">Reset</button></div></form></div>
   <div class="card" style="margin-top:14px"><h3><span id="txCount"></span><span class="sp"></span>
@@ -118,7 +122,7 @@ VIEWS.transactions = async (v, rest) => {
       },
     });
   };
-  $('#flt').onsubmit = e => { e.preventDefault(); const fd = new FormData(e.target); S.txf = {limit: 100}; fd.forEach((val, k) => { if (val) S.txf[k] = val; }); Object.assign(f, S.txf); Object.keys(f).forEach(k => { if (!(k in S.txf)) delete f[k]; }); load(); };
+  $('#flt').onsubmit = e => { e.preventDefault(); const fd = new FormData(e.target); S.txf = {limit: 100}; fd.forEach((val, k) => { if (val) S.txf[k] = val; }); if (S.txf.has_taxtip) { S.txf['has_' + S.txf.has_taxtip] = '1'; delete S.txf.has_taxtip; } Object.assign(f, S.txf); Object.keys(f).forEach(k => { if (!(k in S.txf)) delete f[k]; }); load(); };
   $('#fReset').onclick = () => { S.txf = {limit: 100}; location.hash = '#/transactions'; route(); };
   $('#bulkPrj').onclick = () => assignProjectDialog($$('.sel:checked').map(c => +c.value), () => load());
   $('#bulkDel').onclick = async () => { const ids = $$('.sel:checked').map(c => +c.value); if (!await confirmBox(`Delete ${ids.length} transactions?`)) return; await guard(() => api('/api/transactions/bulk-delete', {method: 'POST', body: {ids}})); toast('Deleted'); load(); loadMeta(); };
@@ -169,6 +173,13 @@ async function openTx(id, after, preset = {}, opts = {}) {
     </div>
     <label class="f${U('category_id')}" data-show="expense income refund dividend"><span>Category</span><select name="category_id"></select></label>
     <label class="f" data-show="adjustment"><span>Reason for difference</span><select name="adj_reason">${reasonOptions(t.adj_reason || (isNew ? defaultReason(acctById(t.account_id)) : 'correction'), {opening: true})}</select><span class="small muted" id="reasonWhy"></span></label>
+    <details class="full taxtip-box" data-show="expense income refund" ${t.tax_amount != null || t.tip_amount != null ? 'open' : ''}><summary class="small">Tax &amp; tip <span class="muted">(optional, part of the amount)</span></summary>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px">
+        <label class="f"><span>Tax</span><input name="tax_amount" type="number" step="0.01" min="0" inputmode="decimal" value="${ttConv(t, t.tax_amount)}" placeholder="—"></label>
+        <label class="f"><span>Tax rate %</span><input name="tax_rate" type="number" step="0.001" min="0" max="100" inputmode="decimal" value="${t.tax_rate ?? ''}" placeholder="—"></label>
+        <label class="f"><span>Tip</span><input name="tip_amount" type="number" step="0.01" min="0" inputmode="decimal" value="${ttConv(t, t.tip_amount)}" placeholder="—"></label>
+        <label class="f"><span>Tip %</span><input name="tip_pct" type="number" step="0.1" min="0" inputmode="decimal" placeholder="—"></label>
+      </div><div class="small muted" id="ttSub"></div></details>
     <div class="full reimb-box" data-show="expense"><label class="chk"><input type="checkbox" name="reimbursable" ${t.reimbursable ? 'checked' : ''}> <b>Reimbursable</b> <span class="small muted">— not counted as an expense in reports; settle it in</span></label>
       <div class="reimb-fields form" ${t.reimbursable ? '' : 'hidden'}>
         <label class="f"><span>Reimburse from (company / person)</span><input name="reimb_payer" list="dlPayer" value="${esc(t.reimb_payer || '')}"></label>
@@ -200,6 +211,14 @@ async function openTx(id, after, preset = {}, opts = {}) {
   const tButtons = id && !isReview ? buttons.replace('<button class="btn" data-cancel>', '<button class="btn" data-recur title="Create a schedule from this transaction">🔁 Make recurring</button><button class="btn" data-cancel>') : buttons;
   const bg = modal(SCH ? (SCH.id ? 'Edit schedule' : 'New schedule') : id ? (isReview ? 'Review item' : 'Edit transaction') : 'New transaction', html, {buttons: sButtons || tButtons, wide: false});
   const form = $('#txForm', bg);
+  const ttSync = (from) => {  // tip % → tip amount (of the subtotal); show subtotal = amount − tax − tip
+    const A = +form.amount.value || 0, tax = form.tax_amount.value === '' ? null : +form.tax_amount.value;
+    if (from === 'pct' && form.tip_pct.value !== '' && A) { const p = +form.tip_pct.value / 100; form.tip_amount.value = (A - (tax || 0) - (A - (tax || 0)) / (1 + p)).toFixed(2); }
+    if (from === 'rate' && form.tax_rate.value !== '' && A && form.tax_amount.value === '') { const r = +form.tax_rate.value / 100, tip = +form.tip_amount.value || 0; form.tax_amount.value = ((A - tip) - (A - tip) / (1 + r)).toFixed(2); }
+    const tip = form.tip_amount.value === '' ? null : +form.tip_amount.value, tx = form.tax_amount.value === '' ? null : +form.tax_amount.value;
+    $('#ttSub', bg).textContent = (tx != null || tip != null) && A ? `${i18nText('Subtotal')} ${money(A - (tx || 0) - (tip || 0), form.currency ? form.currency.value : undefined)}` : '';
+  };
+  if (form.tax_amount) { form.tip_pct.oninput = () => ttSync('pct'); form.tax_rate.oninput = () => ttSync('rate'); ['amount', 'tax_amount', 'tip_amount'].forEach(k => form[k].addEventListener('input', () => ttSync())); ttSync(); }
   // plan line 预算明细: options follow the chosen project (blank = matched by category)
   const syncPlanLines = (keep) => {
     const pid = +form.project_id.value || null, ls = (S.meta.plan_lines || []).filter(l => l.project_id === pid);
@@ -296,6 +315,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
     if (!['expense', 'income', 'refund', 'dividend'].includes(kind)) o.category_id = null;
     o.adj_reason = kind === 'adjustment' ? fd.get('adj_reason') : null;
     if (!o.adj_reason) delete o.adj_reason;
+    if (['expense', 'income', 'refund'].includes(kind)) for (const k of ['tax_amount', 'tip_amount', 'tax_rate']) { const v = fd.get(k); o[k] = v === '' || v == null ? null : +v; }
     if (kind === 'expense') { o.reimbursable = form.reimbursable.checked; o.reimb_payer = fd.get('reimb_payer') || null; o.reimb_expected = fd.get('reimb_expected') || null; o.reimb_note = fd.get('reimb_note') || null; }
     if ($('#prWrap', bg).style.display === 'none') delete o.pr_class; else o.pr_class = fd.get('pr_class') || 'auto';
     if (isNew && opts.raw_text) o.raw_text = opts.raw_text;
@@ -355,6 +375,9 @@ async function openQuickForm(text) {
   if (r.action === 'set_balance' || r.action === 'reconcile') { toast('Balance commands are applied with Add (or Accounts → Set balance)', true); return; }
   const p = r.prefill || {};
   const preset = {};
-  for (const k of ['kind', 'amount', 'currency', 'account_id', 'to_account_id', 'category_id', 'merchant', 'member_id', 'project_id', 'plan_line_id', 'tags', 'date', 'note', 'reimbursable', 'reimb_payer']) if (p[k] !== null && p[k] !== undefined && p[k] !== '') preset[k] = p[k];
+  for (const k of ['kind', 'amount', 'currency', 'account_id', 'to_account_id', 'category_id', 'merchant', 'member_id', 'project_id', 'plan_line_id', 'tags', 'date', 'note', 'reimbursable', 'reimb_payer', 'tax_amount', 'tip_amount', 'tax_rate']) if (p[k] !== null && p[k] !== undefined && p[k] !== '') preset[k] = p[k];
   return openTx(null, null, preset, {uncertain: r.uncertain || [], raw_text: text, banner: `Pre-filled from “${esc(text)}” (confidence ${Math.round((r.confidence || 0) * 100)}%). Nothing is saved until you press Save.`});
-}
+}// tax/tip are stored in the account currency; show them in the entered currency when the amount was converted
+const ttConv = (t, v) => v == null ? '' : (t.orig_currency && t.amount ? Math.round(v * t.orig_amount / t.amount * 100) / 100 : v);
+
+

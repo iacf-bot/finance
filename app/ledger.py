@@ -366,7 +366,9 @@ def parse_ctx(db: Database) -> dict:
 TX_FIELDS = ["ledger_id", "kind", "date", "amount", "currency", "account_id", "to_account_id", "to_amount",
              "orig_amount", "orig_currency", "category_id", "merchant_id", "member_id", "project_id", "tags", "note",
              "source", "attachment", "status", "confidence", "raw_text", "external_id", "ticker", "shares", "price",
-             "fee", "is_demo", "pr_class", "reimbursable", "reimb_payer", "reimb_expected", "reimb_note", "plan_line_id"]
+             "fee", "is_demo", "pr_class", "reimbursable", "reimb_payer", "reimb_expected", "reimb_note", "plan_line_id",
+             "tax_amount", "tip_amount", "tax_rate"]
+TAXTIP_KINDS = ("expense", "income", "refund")
 
 
 def _norm_date(d: Any) -> str:
@@ -452,6 +454,24 @@ def normalize_tx(con, data: dict, rates: dict[str, float], existing: dict | None
             tx["reimb_expected"] = round(abs(float(tx["reimb_expected"])), 2)
         except (TypeError, ValueError):
             raise ValidationError("reimb_expected must be a number")
+    # tax / tip 税 / 小费: OPTIONAL breakouts of the charged total (amount). Blank stays NULL (never 0);
+    # tax + tip must not exceed the amount; subtotal = amount - tax - tip.
+    for k in ("tax_amount", "tip_amount", "tax_rate"):
+        v = tx.get(k)
+        if v is None or (isinstance(v, str) and not v.strip()):
+            tx[k] = None
+            continue
+        try:
+            v = float(str(v).strip().rstrip("%"))
+        except (TypeError, ValueError):
+            raise ValidationError(f"{k} must be a number (or blank)")
+        if v < 0:
+            raise ValidationError(f"{k} cannot be negative")
+        if k == "tax_rate" and v > 100:
+            raise ValidationError("tax_rate is a percentage between 0 and 100")
+        tx[k] = round(v, 4 if k == "tax_rate" else 2)
+    if kind not in TAXTIP_KINDS:
+        tx["tax_amount"] = tx["tip_amount"] = tx["tax_rate"] = None
     acct = con.execute("SELECT * FROM accounts WHERE id=?", (tx["account_id"],)).fetchone() if tx.get("account_id") else None
     if tx.get("account_id") and not acct:
         raise ValidationError("Account not found")
@@ -469,6 +489,9 @@ def normalize_tx(con, data: dict, rates: dict[str, float], existing: dict | None
     if kind != "adjustment":
         amount = abs(amount)
     tx["amount"] = round(amount, 2)
+    parts = (tx.get("tax_amount") or 0) + (tx.get("tip_amount") or 0)
+    if parts and tx["amount"] and parts > tx["amount"] + 0.005:
+        raise ValidationError("Tax + tip can't be more than the amount (the amount is the total charged, tax and tip included)")
     posted = tx["status"] == "posted"
     if posted:
         if not acct:
@@ -487,6 +510,9 @@ def normalize_tx(con, data: dict, rates: dict[str, float], existing: dict | None
     if acct_cur and cur != acct_cur and kind not in INVEST_KINDS:
         tx["orig_amount"], tx["orig_currency"] = tx["amount"], cur
         tx["amount"] = round(convert(tx["amount"], cur, acct_cur, rates), 2)
+        for k in ("tax_amount", "tip_amount"):  # entered in the same currency as the amount
+            if tx.get(k) is not None:
+                tx[k] = round(convert(tx[k], cur, acct_cur, rates), 2)
         cur = acct_cur
     tx["currency"] = cur
     if kind == "transfer" and tx.get("to_account_id"):
@@ -611,6 +637,12 @@ def _tx_where(f: dict) -> tuple[str, list]:
             where.append(f"t.{k}=?"); params.append(int(f[k]))
     if f.get("source"):
         where.append("t.source=?"); params.append(f["source"])
+    for k, col in (("has_tax", "tax_amount"), ("has_tip", "tip_amount")):  # tax/tip recorded (yes) / not recorded (no)
+        v = str(f.get(k) or "").lower()
+        if v in ("1", "yes", "true"):
+            where.append(f"t.{col} IS NOT NULL")
+        elif v in ("0", "no", "false"):
+            where.append(f"t.{col} IS NULL")
     if f.get("reconciled") in ("1", "yes", "true", 1, True):
         where.append("EXISTS (SELECT 1 FROM reconciled_tx rc WHERE rc.transaction_id=t.id)")
     elif f.get("reconciled") in ("0", "no", "false", 0, False):
