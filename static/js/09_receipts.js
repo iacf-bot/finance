@@ -59,7 +59,7 @@ function rcPick(onFiles) {
 }
 function rcPreset(res) {
   const d = res.draft || {}; const p = {kind: 'expense'};
-  for (const k of ['amount', 'currency', 'merchant', 'category_id', 'account_id', 'note']) if (d[k] !== null && d[k] !== undefined && d[k] !== '') p[k] = d[k];
+  for (const k of ['amount', 'currency', 'merchant', 'category_id', 'account_id', 'note', 'tax_amount', 'tip_amount']) if (d[k] !== null && d[k] !== undefined && d[k] !== '') p[k] = d[k];
   if (d.date) p.date = d.date.length > 10 ? d.date : d.date + ' 12:00';
   return p;
 }

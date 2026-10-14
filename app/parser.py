@@ -51,6 +51,9 @@ class ParseResult:
     project_unknown: str | None = None  # "#项目:X" naming no (active) project
     plan_line_id: int | None = None  # "#p:Project/Line"
     plan_line_unknown: str | None = None  # "/Line" naming no plan line of that project
+    tax_amount: float | None = None  # "tax 2.50" / "税 3" / "tax 8.875%" (optional; None = not given)
+    tip_amount: float | None = None  # "tip 5" / "小费 5" / "tip 18%"
+    tax_rate: float | None = None
     tags: list[str] = field(default_factory=list)
     date: str | None = None
     confidence: float = 0.0
@@ -265,7 +268,69 @@ def _has_word(low: str, words: list[str]) -> str | None:
     return None
 
 
+# tax / tip in quick add: "tax 2.50", "tip 18%", "税 3", "小费5", "tip: $4". Percentages apply to the subtotal
+# (the amount is the total charged, tax and tip included).
+TAXTIP_RX = re.compile(r"(?<![\w])(?P<kw>sales\s*tax|tax|vat|gst|hst|税费|税|tips?|gratuity|小费)\s*[:：=]?\s*"
+                       r"(?:[$¥￥€£]\s*)?(?P<num>\d+(?:[.,]\d{1,4})?)\s*(?P<pct>%)?(?![\w.])", re.I)
+
+
+def split_tax_tip(text: str) -> tuple[str, dict]:
+    """Removes tax/tip tokens from quick-add text: (rest, {"tax": (value, is_pct), "tip": (value, is_pct)})."""
+    found: dict = {}
+
+    def repl(m):
+        kw = m.group("kw").lower()
+        which = "tip" if kw.startswith(("tip", "grat")) or kw == "小费" else "tax"
+        if which in found:
+            return m.group(0)
+        found[which] = (float(m.group("num").replace(",", ".")), bool(m.group("pct")))
+        return " "
+    rest = TAXTIP_RX.sub(repl, text or "")
+    return re.sub(r"\s{2,}", " ", rest).strip(), found
+
+
+def apply_tax_tip(res: "ParseResult", found: dict) -> None:
+    """Fills tax/tip from split_tax_tip once the amount is known. Never invents values: absent stays None."""
+    if not found:
+        return
+    tax, tip = found.get("tax"), found.get("tip")
+    A = res.amount
+    if tax and not tax[1]:
+        res.tax_amount = round(tax[0], 2)
+    if tip and not tip[1]:
+        res.tip_amount = round(tip[0], 2)
+    if tax and tax[1]:
+        res.tax_rate = round(tax[0], 4)
+    if A is None:
+        return
+    r = tax[0] / 100 if tax and tax[1] else None
+    p = tip[0] / 100 if tip and tip[1] else None
+    if r is None and p is None:
+        return
+    fixed = (res.tax_amount or 0) + (res.tip_amount or 0)
+    sub = (A - fixed) / (1 + (r or 0) + (p or 0))
+    if r is not None:
+        res.tax_amount = round(sub * r, 2)
+    if p is not None:
+        res.tip_amount = round(sub * p, 2)
+    res.reasons.append("tax/tip % of subtotal")
+
+
 def parse_quick_add(text: str, ctx: dict) -> ParseResult:
+    """parse_quick_add_core plus optional tax / tip tokens."""
+    rest, found = split_tax_tip(normalize(text))
+    if not found:
+        return parse_quick_add_core(text, ctx)
+    res = parse_quick_add_core(rest, ctx)
+    apply_tax_tip(res, found)
+    if res.tax_amount is not None:
+        res.reasons.append(f"tax {res.tax_amount}")
+    if res.tip_amount is not None:
+        res.reasons.append(f"tip {res.tip_amount}")
+    return res
+
+
+def parse_quick_add_core(text: str, ctx: dict) -> ParseResult:
     """ctx keys: accounts, categories, merchants, members, projects, default_account_id, now."""
     now: datetime = ctx.get("now") or datetime.now()
     accounts = ctx.get("accounts") or []

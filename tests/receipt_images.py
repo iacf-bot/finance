@@ -40,3 +40,31 @@ def receipt(lines, kind="en", size=34, fmt="JPEG", width=760) -> bytes:
 
 def has_font(kind):
     return font(kind, 20) is not None
+
+TT_LINES = ["SAMPLE BISTRO", "Date: 10/02/2026  19:40", "", "Pasta              18.00", "Salad              12.00",
+            "Subtotal           30.00", "Sales Tax           2.66", "Tip                 5.40", "TOTAL             $38.06",
+            "THANK YOU"]
+CN_TT_LINES = ["示例餐厅", "日期: 2026-09-30 19:10", "", "牛肉面            40.00", "饺子              60.00",
+               "小计             100.00", "服务费            10.00", "税额               6.00", "合计            ¥116.00",
+               "谢谢惠顾"]
+
+
+def degrade(data: bytes, angle=0.0, noise=0, contrast=1.0, scale=1.0) -> bytes:
+    """Make a synthetic receipt look like a phone photo: tilt, speckle, faded thermal print, low resolution."""
+    import random
+    from PIL import ImageEnhance
+    img = Image.open(io.BytesIO(data)).convert("L")
+    if scale != 1.0:
+        img = img.resize((int(img.width * scale), int(img.height * scale)))
+    if contrast != 1.0:
+        img = ImageEnhance.Contrast(img).enhance(contrast)
+        img = img.point(lambda v: min(255, v + int((1 - contrast) * 120)))
+    if noise:
+        rnd = random.Random(7); px = img.load()
+        for _ in range(noise):
+            x, y = rnd.randrange(img.width), rnd.randrange(img.height)
+            px[x, y] = rnd.choice((0, 90, 200))
+    if angle:
+        img = img.rotate(angle, expand=True, fillcolor=255)
+    buf = io.BytesIO(); img.convert("RGB").save(buf, "JPEG", quality=80)
+    return buf.getvalue()
