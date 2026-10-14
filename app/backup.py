@@ -14,9 +14,29 @@ REMOTE_DIR = "FinanceAppBackups"
 
 
 def backup_dir(db: Database) -> Path:
-    d = Path(db.path).parent / "backups"
+    """Setting `backup_dir` (absolute path, e.g. a NAS / external disk) or data/backups by default."""
+    custom = (db.get_setting("backup_dir", "") or "").strip()
+    d = Path(custom).expanduser() if custom else Path(db.path).parent / "backups"
+    if custom and not d.is_absolute():
+        d = Path(db.path).parent / d
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def check_dir(path: str) -> str:
+    """Validates a backup folder setting: '' (default) or an absolute, writable folder (created if missing)."""
+    path = (path or "").strip()
+    if not path:
+        return ""
+    p = Path(path).expanduser()
+    if not p.is_absolute():
+        raise ValueError("Backup folder must be an absolute path (e.g. D:\\Backups\\Finance or /mnt/nas/finance)")
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        t = p / ".write-test"; t.write_text("ok"); t.unlink()
+    except OSError as e:
+        raise ValueError(f"Backup folder is not writable: {e}")
+    return str(p)
 
 
 def make_backup(db: Database, tag: str = "auto") -> Path:
@@ -27,11 +47,12 @@ def make_backup(db: Database, tag: str = "auto") -> Path:
     with db.lock:
         src.backup(dst)
     dst.close(); src.close()
-    try:  # receipt photos: mirrored into backups/receipts (new/changed files only)
-        from .receipts import backup_copy
-        backup_copy(db, d / "receipts")
-    except Exception:  # noqa: BLE001
-        pass
+    if (db.get_setting("backup_receipts", "1") or "1") != "0":
+        try:  # receipt photos: mirrored into <backups>/receipts (new/changed files only), wherever they're stored
+            from .receipts import backup_copy
+            backup_copy(db, d / "receipts", include_external=True)
+        except Exception:  # noqa: BLE001
+            pass
     prune(db)
     db.set_setting("last_backup_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     return dest
