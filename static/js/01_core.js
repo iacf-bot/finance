@@ -20,8 +20,18 @@ async function api(path, opts = {}) {
   if (!r.ok) { const e = new Error((j && j.detail) ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : r.statusText); e.status = r.status; throw e; }
   return j;
 }
-function toast(msg, err = false) { const t = $('#toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', err ? 5000 : 2500); }
-async function guard(fn) { try { return await fn(); } catch (e) { toast(e.message, true); throw e; } }
+function toast(msg, err = false, ms = 0) { const t = $('#toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms || (err ? Math.min(15000, 5000 + String(msg).length * 40) : 2500)); }
+async function guard(fn) { try { return await fn(); } catch (e) { toast(errText(e), true); if (e && typeof e === 'object') e._shown = true; throw e; } }
+function errText(e) { return (e && (e.message || e.detail)) || String(e || i18nText('Something went wrong')); }
+// null-safe event binding: an element missing (page changed while loading) is skipped instead of throwing
+function bind(sel, ev, fn, root = document) { const x = typeof sel === 'string' ? $(sel, root) : sel; if (x) x['on' + ev] = fn; return x; }
+// last line of defence: no "Uncaught (in promise)". Errors guard() already showed are just swallowed.
+window.addEventListener('unhandledrejection', ev => {
+  const e = ev.reason; ev.preventDefault();
+  if (e && e._shown) return;
+  if (e && e.status === 401) return;
+  console.warn('unhandled', e); try { toast(errText(e), true); } catch (_) { /* toast not ready */ }
+});
 
 function money(v, cur) {
   cur = cur || (S.meta && S.meta.settings.base_currency) || 'USD';
@@ -218,8 +228,11 @@ async function route() {
   renderNav();
   Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
   (S.observers || []).forEach(o => o.disconnect()); S.observers = [];
-  const v = $('#view'); v.innerHTML = '<div class="empty">Loading…</div>';
-  try { await VIEWS[r[0]](v, rest); } catch (e) { v.innerHTML = `<div class="card empty">⚠️ ${esc(e.message)}</div>`; }
+  // each navigation renders into a fresh container: a slower, older view finishing later writes into a detached
+  // element instead of over the new page (and its missing elements no longer throw "Cannot set properties of null")
+  const v = document.createElement('div'); v.className = 'view-root'; v.innerHTML = '<div class="empty">Loading…</div>';
+  $('#view').replaceChildren(v);
+  try { await VIEWS[r[0]](v, rest); } catch (e) { if (v.isConnected) v.innerHTML = `<div class="card empty">⚠️ ${esc(errText(e))}</div>`; else console.debug('stale view', r[0], e); }
 }
 async function refresh() { await loadMeta(); await route(); }
 const demoBanner = () => S.meta.has_demo ? `<div class="demo-banner">🧪 <b>DEMO DATA loaded</b> — accounts and transactions marked [DEMO] are fake sample data. <span class="sp"></span><button class="btn sm" onclick="clearDemo()">Clear demo data</button></div>` : '';

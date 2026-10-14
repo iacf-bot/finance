@@ -142,7 +142,7 @@ def test_smtp_errors(client, smtp):
     assert client.put("/api/email/settings", json={"email_daily_enabled": True}).status_code == 400   # SMTP first
     setup_smtp(client, smtp, smtp_password="wrong")
     r = client.post("/api/email/test", json={})
-    assert r.status_code == 400 and "login failed" in r.json()["message"]
+    assert r.status_code == 400 and "Login refused" in r.json()["message"]
 
 
 # ---------------------------------------------------------------- reports

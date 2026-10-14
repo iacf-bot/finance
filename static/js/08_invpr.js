@@ -14,6 +14,7 @@ async function renderPR() {
   const qs = new URLSearchParams(); if (from) qs.set('from', from); if (to) qs.set('to', to);
   let d;
   try { d = await api('/api/investments/principal-returns?' + qs); } catch (e) { el.innerHTML = `<h3>Principal &amp; returns</h3><div class="neg">${esc(e.message)}</div>`; return; }
+  if (!el.isConnected) return;  // navigated away while loading
   const B = d.currency, T = d.total;
   const accRow = a => `<tr class="pr-acc" data-acc="${a.id}" title="Open account detail" tabindex="0">
       <td><span class="ind"></span>${isDemoName(a.name) ? '<span class="pill demo">DEMO</span> ' : ''}${esc(a.name)}${a.archived ? ' <span class="small muted">(archived)</span>' : ''} <span class="small muted">${a.currency}</span></td>
@@ -42,8 +43,8 @@ async function renderPR() {
     <div class="chart-box" style="margin-top:14px;height:260px"><canvas id="prChart"></canvas></div>
     <div class="small muted">Combined in ${esc(B)} (${esc(d.interval)} points). Rows open the account detail page.</div>`}`;
   $$('[data-pp]', el).forEach(b => b.onclick = () => { st.period = b.dataset.pp; if (st.period !== 'CUSTOM') renderPR(); else { $$('[data-pp]', el).forEach(x => x.classList.toggle('on', x === b)); $('#prCustom').hidden = false; } });
-  const ce = () => { st.start = $('#prS').value; st.end = $('#prE').value; if (st.start || st.end) renderPR(); };
-  if ($('#prS')) { $('#prS').onchange = ce; $('#prE').onchange = ce; }
+  const ce = () => { st.start = ($('#prS', el) || {}).value || ''; st.end = ($('#prE', el) || {}).value || ''; if (st.start || st.end) renderPR(); };
+  bind('#prS', 'change', ce, el); bind('#prE', 'change', ce, el);
   $$('[data-acc]', el).forEach(tr => tr.onkeydown = e => { if (e.key === 'Enter') tr.click(); });
   $$('[data-acc]', el).forEach(tr => tr.onclick = () => { st.scroll = window.scrollY; st.fromList = true; location.hash = '#/investments/account/' + tr.dataset.acc; });
   const P = d.series || [];

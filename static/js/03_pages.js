@@ -296,6 +296,7 @@ async function renderReturns() {
   const qs = new URLSearchParams({period: r.period, scope: r.scope, ...(r.period === 'custom' ? {start: r.start, end: r.end || today()} : {})});
   let d;
   try { d = await api('/api/investments/returns?' + qs); } catch (e) { el.innerHTML = `<h3>Investment returns</h3><div class="neg">${esc(e.message)}</div>`; return; }
+  if (!el.isConnected) return;  // user navigated away while loading (e.g. to Review): nothing to bind
   const cur = d.currency;
   const ordered = [];
   const total = d.rows.find(x => x.level === 'total');
@@ -327,11 +328,11 @@ async function renderReturns() {
      <div><h4 style="margin:0 0 6px">Cumulative gain · ${esc(d.scope.name)}</h4><div class="chart-box" style="height:260px"><canvas id="retChart"></canvas></div></div>
      <div><h4 style="margin:0 0 6px">Returns by year · ${esc(d.scope.name)}</h4>${d.scope.years.length ? `<div class="scroll-x"><table class="t"><thead><tr><th>Year</th><th class="right">Start</th><th class="right">Net in</th><th class="right">Gain</th><th class="right" title="${RET_TIPS.md}">Money-wtd</th><th class="right" title="${RET_TIPS.simple}">Simple</th></tr></thead><tbody>${d.scope.years.slice().reverse().map(y => `<tr><td>${y.year}${y.end.slice(5) !== '12-31' ? ' <span class="small muted">to ' + y.end.slice(5) + '</span>' : ''}</td><td class="right">${money(y.start_value, cur)}</td><td class="right">${money(y.net_contributions, cur)}</td><td class="right ${y.gain >= 0 ? 'pos' : 'neg'}">${money(y.gain, cur)}</td><td class="right">${pctCell(y.md_return)}</td><td class="right">${pctCell(y.simple_return)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No data</div>'}</div>
    </div>`}`;
-  $('#retP').onchange = e => { r.period = e.target.value; if (r.period !== 'custom') renderReturns(); else $('#retCustom').style.display = 'inline-flex'; };
-  const go = $('#retGo'); if (go) go.onclick = () => { r.start = $('#retS').value; r.end = $('#retE').value; renderReturns(); };
-  $('#reclass').onclick = () => reclassifyTool();
+  bind('#retP', 'change', e => { r.period = e.target.value; if (r.period !== 'custom') renderReturns(); else { const c = $('#retCustom', el); if (c) c.style.display = 'inline-flex'; } }, el);
+  bind('#retGo', 'click', () => { r.start = ($('#retS', el) || {}).value || ''; r.end = ($('#retE', el) || {}).value || ''; renderReturns(); }, el);
+  bind('#reclass', 'click', () => reclassifyTool(), el);
   $$('[data-scope]', el).forEach(tr => tr.onclick = () => { r.scope = tr.dataset.scope; renderReturns(); });
-  if ($('#retChart')) {
+  if ($('#retChart', el)) {
     const sr = d.scope.series;
     chart('retChart', {type: 'line', data: {labels: sr.map(x => x.date), datasets: [
       {label: 'Cumulative gain', data: sr.map(x => x.cumulative_gain), borderColor: '#8a5cd6', backgroundColor: 'rgba(138,92,214,.12)', fill: true, tension: .2, pointRadius: sr.length > 40 ? 0 : 2},

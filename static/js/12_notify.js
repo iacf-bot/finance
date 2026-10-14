@@ -37,7 +37,7 @@ async function offsiteCard(el) {
     b.offsite_enabled = f.offsite_enabled.checked; b.offsite_receipts = f.offsite_receipts.checked; b.offsite_weekdays = readWeekdays(f, 'off');
     await guard(() => api('/api/offsite', {method: 'PUT', body: b})); toast(i18nText('Saved')); route();
   };
-  $('#offRun').onclick = async () => { const r = await guard(() => api('/api/offsite/run', {method: 'POST'})); toast((r.ok ? '✓ ' : '✗ ') + r.detail, !r.ok); route(); };
+  $('#offRun').onclick = async () => { const r = await guard(() => api('/api/offsite/run', {method: 'POST'})).catch(() => null); if (!r) return; toast((r.ok ? '✓ ' : '✗ ') + r.detail, !r.ok); route(); };
 }
 
 SET.notify = async (el) => {
@@ -57,6 +57,7 @@ SET.notify = async (el) => {
       <label class="f"><span>User</span><input name="smtp_user" value="${esc(m.smtp_user || '')}" autocomplete="off"></label>
       <label class="f"><span>App password</span><input name="smtp_password" type="password" autocomplete="new-password" placeholder="${m.has_password ? '•••••••• (saved, leave blank to keep)' : ''}"></label>
       <label class="f"><span>From address</span><input name="smtp_from" value="${esc(m.smtp_from || '')}" placeholder="Finance <me@example.com>"></label>
+      <label class="f"><span>Timeout (seconds)</span><input name="smtp_timeout" type="number" min="5" max="60" value="${esc(m.smtp_timeout || '15')}"></label>
       <label class="f full"><span>To (comma separated)</span><input name="smtp_to" value="${esc(m.smtp_to || '')}" placeholder="me@example.com, partner@example.com"></label>
       <label class="f"><span>Email language</span><select name="email_lang">${[['en', 'English'], ['zh-CN', '简体中文'], ['zh-TW', '繁體中文']].map(([k, l]) => `<option value="${k}" ${d.email_lang === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <div class="full row end"><button type="button" class="btn" id="smTest">Send test email</button><button class="btn pri">Save</button></div></form></div>
@@ -66,7 +67,15 @@ SET.notify = async (el) => {
     ${job('monthly', '📊 Monthly report', `<label class="f"><span>Day of month</span><input name="email_monthly_monthday" type="number" min="1" max="31" value="${esc(d.email_monthly_monthday || '1')}"></label><div class="small muted full">Covers the previous calendar month.</div>`)}
   </div><p class="small muted" style="margin-top:10px">Reports include income/expense, top categories, tax &amp; tips, investments (principal vs returns), reminders due, reimbursements outstanding and projects vs budget.</p>`;
   $('#smF').onsubmit = async e => { e.preventDefault(); await guard(() => api('/api/email/settings', {method: 'PUT', body: Object.fromEntries(new FormData(e.target))})); toast(i18nText('Saved')); route(); };
-  $('#smTest').onclick = async () => { const r = await guard(() => api('/api/email/test', {method: 'POST', body: {}})); toast('✓ ' + i18nText('Test email sent to') + ' ' + r.to.join(', ')); };
+  $('#smTest').onclick = async () => {
+    const btn = $('#smTest'); const label = btn.textContent; btn.disabled = true; btn.textContent = i18nText('Sending…');
+    try {
+      const r = await api('/api/email/test', {method: 'POST', body: {}});
+      toast('✓ ' + i18nText('Test email sent to') + ' ' + r.to.join(', '));
+    } catch (e) {
+      toast('✗ ' + i18nText('Test email failed') + ': ' + errText(e), true, 15000);  // server explains likely causes
+    } finally { btn.disabled = false; btn.textContent = label; }
+  };
   el.querySelectorAll('.job-f').forEach(f => {
     const k = f.dataset.job;
     f.onsubmit = async e => {
@@ -77,7 +86,7 @@ SET.notify = async (el) => {
     };
   });
   el.querySelectorAll('[data-send]').forEach(b => b.onclick = async () => {
-    const r = await guard(() => api(`/api/email/send?kind=${b.dataset.send}`, {method: 'POST'}));
+    const r = await guard(() => api(`/api/email/send?kind=${b.dataset.send}`, {method: 'POST'})).catch(() => null); if (!r) return;
     toast(r.skipped ? i18nText('Nothing to send') + ' (' + r.reason + ')' : r.ok ? '✓ ' + i18nText('Sent') : '✗ ' + r.error, !r.ok); route();
   });
 };

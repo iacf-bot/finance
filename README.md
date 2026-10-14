@@ -411,6 +411,12 @@ The bot uses long polling, so it needs no public URL. Status is shown in Setting
 * Each job shows its schedule, last sent/status and next run. Every slot is sent once, even with several app instances.
 * API: `GET/PUT /api/email/settings`, `POST /api/email/test`, `GET /api/email/preview?kind=daily|weekly|monthly|reminders&lang=`, `POST /api/email/send?kind=`.
 * Tests use an in-process fake SMTP server (`tests/fake_smtp.py`); nothing is sent to the internet.
+* **Test email fails?** The error says why, with likely fixes. Common causes:
+  * a timeout means the wrong host/port, or a firewall/VPN/ISP blocking outgoing SMTP; try the other port;
+  * port 465 needs SSL/TLS and port 587 needs STARTTLS;
+  * Gmail needs an app password, not your normal password.
+
+  Gmail: `smtp.gmail.com`, 587 + STARTTLS (or 465 + SSL/TLS), user = your Gmail address, password = the 16-character app password. The timeout is configurable (`smtp_timeout`, 5–60 s, default 15).
 
 ## Tests
 ```bash
