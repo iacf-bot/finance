@@ -683,18 +683,25 @@ def thumbnail(path: Path, size: int = 360) -> bytes:
     return buf.getvalue()
 
 
-def backup_copy(db: Database, dest_root: Path) -> int:
-    """Mirror receipt files into the backups folder (new/changed files only). Skipped when the receipts folder is
-    outside the data folder (NAS / Drive folders have their own copies)."""
+def backup_copy(db: Database, dest_root: Path, include_external: bool = False) -> int:
+    """Mirror receipt files into the backups folder (new/changed files only). A receipts folder outside the data
+    folder is skipped unless include_external (backups then hold every photo, wherever it's stored)."""
     base = base_dir(db)
     data = Path(db.path).parent.resolve()
-    if not base.exists() or data not in base.resolve().parents and base.resolve() != data:
+    if not base.exists():
+        return 0
+    if not include_external and data not in base.resolve().parents and base.resolve() != data:
+        return 0
+    try:
+        if dest_root.resolve() == base.resolve() or base.resolve() in dest_root.resolve().parents:
+            return 0  # never copy a folder into itself
+    except OSError:
         return 0
     n = 0
     for p in base.rglob("*"):
         if p.is_file():
             q = dest_root / p.relative_to(base)
-            if not q.exists() or q.stat().st_size != p.stat().st_size:
+            if not q.exists() or q.stat().st_size != p.stat().st_size or q.stat().st_mtime < p.stat().st_mtime - 1:
                 q.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(p, q); n += 1
     return n

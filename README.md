@@ -387,6 +387,30 @@ The bot uses long polling, so it needs no public URL. Status is shown in Setting
   ```
   Once a remote named `gdrive` exists, each scheduled backup is also copied to `gdrive:FinanceAppBackups`.
   Settings → Backup shows the rclone status and has an *Upload latest now* button.
+* **Backup folder:** `backup_dir` (Settings → Backup) is an absolute path, e.g. a NAS or external disk; blank means `data/backups`.
+  **Receipt photos are included** (`backup_receipts`, on by default). They are copied into `<backup folder>/receipts`, new/changed files only, even when the receipts folder is outside the data folder.
+* **Incremental off-site backup to Google Drive** (Settings → Backup → ☁️, **off by default**):
+  * *Synced folder:* point it at a Google Drive for desktop folder (e.g. `G:\My Drive\FinanceBackups`). Each run adds one snapshot to `<folder>/db/` and copies only new/changed photos to `<folder>/receipts/`; Drive uploads them.
+  * *rclone:* `rclone copy` to `<target>/db` and `<target>/receipts` (only changed files transfer), e.g. target `gdrive:FinanceAppBackups`.
+  * Schedule: every N hours, or fixed times (HH:MM in the app time zone) on chosen weekdays, like the email-check schedule. A run missed while the app was down runs once on restart.
+  * Retention: the newest N snapshots (default 14) stay in the destination; receipt photos there are never deleted.
+  * Settings shows last run, status, details and next run. *Run now* runs it immediately. `GET/PUT /api/offsite`, `POST /api/offsite/run`.
+  * **Restore:**
+    1. Download the newest `db/finance-….db` from Drive (or `rclone copy gdrive:FinanceAppBackups/db/<file> .`).
+    2. Upload it in Settings → Backup → Restore; the current DB is backed up first.
+    3. Copy the Drive `receipts/` folder back into your receipts folder.
+
+## Email: SMTP, reminders and reports 邮件报表 (all off by default)
+* **Settings → Email reports & SMTP:** host, port, security (STARTTLS 587 / SSL 465 / none), user, **app password** (stored encrypted with `data/secret.key`, like IMAP passwords; never returned by the API), From, and a comma-separated To list.
+  *Send test email* checks the settings. For Gmail: `smtp.gmail.com`, 587, STARTTLS, plus an app password from Google Account → Security → App passwords.
+* **Reminder emails:** at your times/weekdays, a list of the reminders inside their lead window (`reminder_lead_days` or per reminder) plus overdue ones. If nothing is due, no email is sent.
+* **Reports:**
+  * Daily covers yesterday; weekly covers the 7 days up to yesterday, sent on chosen weekdays; monthly covers the previous month, sent on a chosen day of the month (31 = last day).
+  * Each report has income/expense/net, top categories, tax & tips, investments (net principal added vs returns), reminders due, reimbursements outstanding and projects vs budget.
+  * HTML with a plain-text part, in `email_lang` (English, 简体中文, 繁體中文). *Preview* opens the HTML in the browser.
+* Each job shows its schedule, last sent/status and next run. Every slot is sent once, even with several app instances.
+* API: `GET/PUT /api/email/settings`, `POST /api/email/test`, `GET /api/email/preview?kind=daily|weekly|monthly|reminders&lang=`, `POST /api/email/send?kind=`.
+* Tests use an in-process fake SMTP server (`tests/fake_smtp.py`); nothing is sent to the internet.
 
 ## Tests
 ```bash
