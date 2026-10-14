@@ -12,9 +12,10 @@ services:
       FINANCE_IN_CONTAINER: "1"
       FINANCE_HOSTS: "0.0.0.0"
       FINANCE_PORT: "8088"
+      DATA_DIR: "/app/data"
     ports:
       - "127.0.0.1:8088:8088"
-      - "127.0.0.1:8088:8088"   # or "xxx.xxx.xxx.xxx:8088:8088" for your Tailscale IP
+      # - "x.x.x.x:8088:8088"   # your Tailscale IP; keep the real one in docker-compose.local.yml
     volumes:
       - ./data:/app/data
       # for rclone → Google Drive uploads, mount your rclone config (created with `rclone config` on the host):
