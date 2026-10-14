@@ -354,7 +354,7 @@ PERIOD_KEYS = ("contributions", "withdrawals", "net_contributions", "returns", "
 
 def combine_periods(parts: list[tuple[dict, float]], base: str) -> dict:
     """Sum per-account period_figures (each with a conversion factor to `base`) into one block (same definitions)."""
-    s = defaultdict(float)
+    s = defaultdict(float, {k: 0.0 for k in PERIOD_KEYS})  # no accounts yet: zeros, not missing keys (was a 500)
     denom = 0.0
     for pf, f in parts:
         for k in PERIOD_KEYS:
