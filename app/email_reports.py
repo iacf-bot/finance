@@ -147,7 +147,10 @@ def build(db: Database, kind: str, today: date | None = None, lng: str | None = 
     for r in due:
         amt = r["remaining"] if r["remaining"] is not None else r["statement_amount"]
         when = L["overdue"] if r["state"] == "overdue" else L["today"] if r["days_left"] == 0 else L["in_days"].format(n=r["days_left"])
-        due_rows.append([r["due_date"] or "", r["title"], when, _money(amt, r["currency"]) if amt else ""])
+        title = r["title"]
+        if r["kind"] == "card_expiry":  # card expires: which scheduled payments still need the new card
+            title = "💳 " + reminders.expiry_text(r, zh, lang(db, lng) == "zh-TW")
+        due_rows.append([r["due_date"] or "", title, when, _money(amt, r["currency"]) if amt else ""])
     if kind == "reminders":
         subject = f"⏰ {L['subject_rem'].format(n=len(due))}"
         secs.append((L["due"], due_rows or L["none_due"]))

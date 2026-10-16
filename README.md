@@ -690,13 +690,40 @@ The server recognises the image by its bytes. It accepts any form field name, a 
 * **Scheduled reminders**: in a schedule pick *When due → Remind only 仅提醒*. Works with one-time (`once`) and
   recurring schedules. It creates a reminder instead of a transaction. *Paid* can create the transaction from the
   schedule template.
+* **Card expiry 信用卡到期**: in the credit card's account form set *Card expires (MM/YY)*. The card counts as valid
+  through the last day of that month. The account list and the account page show *Expires MM/YYYY*, amber inside the
+  reminder window and red once expired.
+  * **When it shows:** from 60 days before the end of the expiry month (*Reminders → Settings → Card expiry: remind N
+    days*, setting `card_expiry_lead_days`, 0–365). It says *Card X expires MM/YYYY*. It lists *Update the payment card
+    for:* every active scheduled transaction charged to that card (template account = the card), including *Remind
+    only* schedules. Paused and ended schedules are not listed. Each name opens the schedule editor. After the expiry
+    date it is overdue (red) until resolved.
+  * **How it stops:** each listed schedule is either **✓ Card updated** (for example the merchant's autopay now uses
+    the new card, even if it stays the same account in the app) or **Move to account…** (the schedule now uses another
+    account; open *Remind only* reminders of that schedule move with it). The card itself also has to be confirmed:
+    **New expiry date…** (or entering a later expiry in the account form) marks it *renewed*; **Confirm card (closed /
+    nothing to change)** acknowledges it; archiving the account counts too. When the card is confirmed AND no listed
+    schedule is left unconfirmed, the reminder completes by itself (`done_reason=resolved`) and stops showing in the
+    Reminder Center, the iPhone notify endpoint and reminder emails.
+  * **✓ Done** closes it right away. While schedules are unconfirmed, the UI asks first and the API reply carries a
+    `warning`.
+  * **Next cycle:** each expiry has its own reminder. A new expiry starts a new cycle whose confirmations start from
+    scratch, about 60 days before the new card expires. Correcting the expiry to an earlier month (a typo) or clearing
+    it retires the old reminder.
+  * **API:** `POST /api/reminders/{id}/schedules/{sid}/confirm` (`{"undo": true}` to undo),
+    `POST /api/reminders/{id}/schedules/{sid}/reassign` `{"account_id": N}`, and `POST /api/reminders/{id}/card`
+    `{"action": "renew", "expiry": "08/29"}` | `{"action": "acknowledge"}` | `{"action": "undo"}`. The account field is
+    `card_expiry` (accepts `MM/YY`, `MM/YYYY` or `YYYY-MM`; stored as `YYYY-MM`).
+  * **Upgrading** adds `accounts.card_expiry`, `reminders.expiry/card_state/card_state_at` and the
+    `card_expiry_checks` table. These are additive changes, and a copy `finance-…-before-migrate.db` is written to the
+    backups folder first.
 * **Lead window**: reminders appear N days before the due date. The default is 10 (*Reminders → Settings*,
   `reminder_lead_days`). A schedule can override it with *Remind days before*, a card with *Remind days before due*.
   The *All upcoming* filter shows later items. The nav badge counts overdue items plus items inside their window.
 * Actions: Paid (optionally records the payment transfer), ✓ done, Snooze, ✕ dismiss, Reopen, edit.
   A background job (about every 10 min) generates and auto-completes reminders. It is idempotent.
   Optional Telegram push (setting `reminder_notify=telegram`, off by default) sends one message per reminder when it
-  enters its window. Email push isn't implemented.
+  enters its window. Reminder emails (SMTP): see "Email: SMTP, reminders and reports" above.
 * API: `GET /api/reminders?view=open|all_upcoming|later|overdue|snoozed|done|all`, `PUT /api/reminders/{id}`, and
   `POST /api/reminders/{id}/paid|done|dismiss|snooze|reopen`.
 
@@ -704,7 +731,10 @@ The server recognises the image by its bytes. It accepts any form field name, a 
 
 `GET /api/reminders/notify?days=7&include_overdue=true&lang=auto` (header `X-API-Key`). It returns
 `{count, title, message, items}`, for example `"3 条提醒"` with one line per item: due date, name, amount and ⚠️ if
-overdue. Items are only included inside their lead window.
+overdue. Items are only included inside their lead window. Card expiry reminders are listed during their whole window
+(not only the next `days`), with a line such as
+`💳 Visa ••1234 expires 11/2026 · Update the payment card for: Streaming, Gym`. Their items carry `expiry_label`,
+`pending_names` and `detail`. Reminder emails include the same line.
 
 1. Shortcuts → Automation → **+** → Personal Automation → **Time of Day** (e.g. 09:00, Daily) → Run Immediately.
 2. **Get Contents of URL**: `http://xxx.xxx.xxx.xxx:8088/api/reminders/notify?days=7`, Method GET, Header
