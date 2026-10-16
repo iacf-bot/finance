@@ -280,7 +280,47 @@ class Database:
             con.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                         (key, None if value is None else str(value)))
 
+    def pending_migrations(self) -> list[str]:
+        """Schema changes init() is about to apply to an EXISTING database (empty for a new or up-to-date one)."""
+        p = Path(self.path)
+        if not p.exists() or p.stat().st_size == 0:
+            return []
+        con = sqlite3.connect(self.path, timeout=30)
+        try:
+            tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "transactions" not in tables:
+                return []
+            out = []
+            if "reimb_links" not in tables or "alloc_amount" not in {r[1] for r in con.execute("PRAGMA table_info(reimb_links)")}:
+                out.append("reimb_links.alloc_amount")
+            return out
+        finally:
+            con.close()
+
+    def backup_before_migrate(self) -> Path | None:
+        """Copy the database into the backups folder before init() changes the schema of an existing file."""
+        todo = self.pending_migrations()
+        if not todo:
+            return None
+        from .backup import make_backup  # local import: backup imports this module
+        try:
+            return make_backup(self, "before-migrate")
+        except Exception:  # noqa: BLE001 - e.g. a custom backup folder that is offline: fall back to data/backups
+            import logging
+            import shutil
+            d = Path(self.path).parent / "backups"
+            d.mkdir(parents=True, exist_ok=True)
+            dest = d / f"finance-{datetime.now().strftime('%Y%m%d-%H%M%S')}-before-migrate.db"
+            src, dst = sqlite3.connect(self.path), sqlite3.connect(dest)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close(); src.close()
+            logging.getLogger("finance").warning("pre-migration backup written to %s", dest)
+            return dest
+
     def init(self):
+        self.last_migration_backup = self.backup_before_migrate()
         with self.tx() as con:
             con.executescript(SCHEMA)
             seeded = con.execute("SELECT value FROM settings WHERE key='seeded'").fetchone()
@@ -328,6 +368,12 @@ class Database:
             con.execute("CREATE INDEX IF NOT EXISTS ix_rl_receipt ON reimb_links(receipt_id)")
             con.execute("CREATE INDEX IF NOT EXISTS ix_rl_expense ON reimb_links(expense_id)")
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_reimb ON transactions(reimbursable)")
+            # reimbursement links (additive): alloc_amount = the part of the reimbursement (in ITS currency) a link uses, so a
+            # reimbursement shows allocated vs unallocated money even when the expense is in another currency. `amount` stays
+            # the part of the expense (expense currency) it reimburses. Existing links are back-filled once (see below).
+            if "alloc_amount" not in {r[1] for r in con.execute("PRAGMA table_info(reimb_links)")}:
+                con.execute("ALTER TABLE reimb_links ADD COLUMN alloc_amount REAL")
+            _backfill_alloc(con)
             # deleting a receipt or an expense removes its links (every delete path, incl. bulk/account/demo)
             con.execute("""CREATE TRIGGER IF NOT EXISTS trg_tx_delete_reimb AFTER DELETE ON transactions BEGIN
                 DELETE FROM reimb_links WHERE receipt_id=OLD.id OR expense_id=OLD.id; END""")
@@ -433,6 +479,50 @@ class Database:
                                 (r["name"], r["sender_pattern"], r.get("subject_pattern", ""), r["amount_regex"],
                                  r.get("merchant_regex", ""), r.get("last4_regex", ""), r.get("kind", "expense"),
                                  r.get("currency", ""), r.get("priority", 50), r.get("note", "")))
+
+
+def distribute_alloc(receipt_amount: float, receipt_cur: str, links: list[tuple[float, str]], rates: dict[str, float]) -> list[float]:
+    """Split a reimbursement's amount over its links -> alloc amount per link (reimbursement currency).
+    links = [(amount in the expense's currency, expense currency)]. A same-currency link uses exactly its amount; links in
+    another currency share what is left, in proportion to their converted values (so a USD reimbursement of 98.50 for a
+    700 CNY expense allocates all 98.50 to it)."""
+    def conv(v, f, t):
+        if f == t or not v:
+            return v
+        fr, tr = rates.get(f), rates.get(t)
+        return v * fr / tr if fr and tr else v
+    out: list[float | None] = [round(a, 2) if c == receipt_cur else None for a, c in links]
+    cross = [i for i, x in enumerate(out) if x is None]
+    if cross:
+        left = round(receipt_amount - sum(x for x in out if x is not None), 2)
+        conv_vals = {i: conv(links[i][0], links[i][1], receipt_cur) for i in cross}
+        tot = sum(conv_vals.values())
+        if left > 0 and tot > 0:
+            acc = 0.0
+            for n, i in enumerate(cross):
+                v = round(left - acc, 2) if n == len(cross) - 1 else round(left * conv_vals[i] / tot, 2)
+                out[i] = v; acc += v
+        else:
+            for i in cross:
+                out[i] = round(conv_vals[i], 2)
+    return [float(x) for x in out]
+
+
+def _backfill_alloc(con: sqlite3.Connection):
+    """One-time fill of reimb_links.alloc_amount for links made before the column existed (only NULLs are written)."""
+    rids = [r[0] for r in con.execute("SELECT DISTINCT receipt_id FROM reimb_links WHERE alloc_amount IS NULL")]
+    if not rids:
+        return
+    rates = {r[0]: r[1] for r in con.execute("SELECT currency, rate FROM fx_rates")}
+    for rid in rids:
+        rc = con.execute("SELECT amount, currency FROM transactions WHERE id=?", (rid,)).fetchone()
+        links = con.execute("""SELECT l.id, l.amount, e.currency FROM reimb_links l JOIN transactions e ON e.id=l.expense_id
+            WHERE l.receipt_id=? ORDER BY l.id""", (rid,)).fetchall()
+        if not rc or not links:
+            continue
+        allocs = distribute_alloc(rc[0] or 0, rc[1], [(l[1], l[2]) for l in links], rates)
+        for l, a in zip(links, allocs):
+            con.execute("UPDATE reimb_links SET alloc_amount=? WHERE id=? AND alloc_amount IS NULL", (a, l[0]))
 
 
 def seed_defaults(con: sqlite3.Connection):

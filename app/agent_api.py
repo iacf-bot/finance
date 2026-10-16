@@ -16,8 +16,9 @@ from .parser import ParseResult, apply_tax_tip
 
 ALIASES = {"tax_amount": "tax", "tip_amount": "tip", "member": "person", "who": "person", "payee": "merchant",
            "description": "note", "memo": "note", "type": "kind", "plan_line_id": "plan_line", "category_id": "category",
-           "account_id": "account", "project_id": "project", "image": "receipt", "photo": "receipt", "file": "receipt"}
-KINDS = ("expense", "income", "refund", "transfer")
+           "account_id": "account", "project_id": "project", "image": "receipt", "photo": "receipt", "file": "receipt",
+           "reimburses": "expense_ids", "link_expenses": "expense_ids", "reimb_payer": "payer"}
+KINDS = ("expense", "income", "refund", "transfer", "reimbursement")
 
 
 class AgentError(ValueError):
@@ -172,12 +173,14 @@ def create(db: Database, body: dict, files: list[tuple[bytes, str]] | None = Non
         merchant = b.get("merchant") or (parsed.get("merchant") if saved and b.get("amount") is None else None)
         if merchant:
             tx["merchant"] = merchant
+        if kind == "reimbursement" and b.get("payer"):
+            tx["reimb_payer"] = str(b["payer"]).strip()
         if kind == "transfer":
             to = b.get("to_account")
             if to is None:
                 raise AgentError("transfer needs to_account")
             tx["to_account_id"] = resolve_account(db, to)["id"]
-        else:
+        elif kind != "reimbursement":
             try:
                 tx["category_id"] = resolve_category(db, b.get("category"), kind)
             except AgentError as e:
@@ -217,6 +220,18 @@ def create(db: Database, body: dict, files: list[tuple[bytes, str]] | None = Non
     linked = rids + [r["id"] for r in saved]
     if linked:
         t["receipts"] = receipts.link(db, linked, t["id"])
+    # a reimbursement can pay back reimbursable expenses right away: expense_ids = [12, 15] or "12,15" (each link gets
+    # the default amount: the smaller of the expense's outstanding and what is still unallocated)
+    eids = b.get("expense_ids")
+    if kind == "reimbursement" and eids not in (None, "", []):
+        from . import reimburse
+        ids = eids if isinstance(eids, list) else [x for x in re.split(r"[,\s]+", str(eids)) if x]
+        for x in ids:
+            try:
+                reimburse.link(db, {"reimbursement_id": t["id"], "expense_id": int(str(x).lstrip("#"))})
+            except (ValueError, ledger.ValidationError) as e:
+                warnings.append(f"not linked to expense {x}: {e}")
+        t = ledger.get_tx(db, t["id"])
     return {"ok": True, "id": t["id"], "message": message(t, acct), "transaction": t, "warnings": warnings}
 
 

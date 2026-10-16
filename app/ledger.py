@@ -16,11 +16,16 @@ INVEST_KINDS = {"buy", "sell", "dividend", "invest_fee"}
 EFFECT_SQL = """CASE kind WHEN 'expense' THEN -amount WHEN 'income' THEN amount WHEN 'refund' THEN amount
   WHEN 'transfer' THEN -amount WHEN 'adjustment' THEN amount WHEN 'buy' THEN -amount WHEN 'sell' THEN amount
   WHEN 'dividend' THEN amount WHEN 'invest_fee' THEN -amount WHEN 'reimbursement' THEN amount ELSE 0 END"""
-# Reimbursements 报销: a reimbursable expense (not written off) is not an expense in reports, and a reimbursement
-# receipt (kind 'reimbursement') is not income. A written-off expense counts only its unreimbursed part.
+# Reimbursements 报销 — the stats rule (Reports, KPIs, budgets, projects, list headers all use REPORT_AMOUNT_SQL):
+# * a reimbursement (kind 'reimbursement') is never income, allocated or not;
+# * a reimbursable expense counts 0 while it is OPEN or PARTIAL (the money is expected back);
+# * once it is CLOSED it counts amount − reimbursed (never below 0). Closed = reimbursed ≥ expected amount (auto-close)
+#   or written off by hand 核销 (manual close). So the reimbursed part never counts; what was not paid back does.
 REIMB_SETTLED_SQL = "COALESCE((SELECT SUM(l.amount) FROM reimb_links l WHERE l.expense_id=t.id),0)"
+REIMB_EXPECTED_SQL = "COALESCE(t.reimb_expected, t.amount)"
+REIMB_CLOSED_SQL = f"(COALESCE(t.reimb_writeoff,0)=1 OR {REIMB_SETTLED_SQL} >= {REIMB_EXPECTED_SQL} - 0.005)"
 REPORT_AMOUNT_SQL = f"""CASE WHEN t.kind='expense' AND COALESCE(t.reimbursable,0)=1 THEN
-  (CASE WHEN COALESCE(t.reimb_writeoff,0)=1 THEN MAX(t.amount - {REIMB_SETTLED_SQL}, 0) ELSE 0 END) ELSE t.amount END"""
+  (CASE WHEN {REIMB_CLOSED_SQL} THEN MAX(t.amount - {REIMB_SETTLED_SQL}, 0) ELSE 0 END) ELSE t.amount END"""
 
 
 class ValidationError(ValueError):
@@ -572,9 +577,16 @@ def update_tx(db: Database, tid: int, data: dict) -> dict:
         linked = con.execute("SELECT COUNT(*) FROM reimb_links WHERE expense_id=? OR receipt_id=?", (tid, tid)).fetchone()[0]
         if linked:
             if ex["kind"] == "expense" and (tx["kind"] != "expense" or not tx.get("reimbursable")):
-                raise ValidationError("This expense has reimbursement receipts linked: delete those receipts (or write it off) first")
+                raise ValidationError("This expense is linked to reimbursements: unlink them (or close it) first")
             if ex["kind"] == "reimbursement" and tx["kind"] != "reimbursement":
                 con.execute("DELETE FROM reimb_links WHERE receipt_id=?", (tid,))  # no longer a receipt: unlink
+            elif tx["currency"] != ex["currency"] and tx["kind"] == ex["kind"]:
+                raise ValidationError("This transaction has reimbursement links in its currency: unlink them before moving it to an account in another currency")
+            elif ex["kind"] == "reimbursement":
+                alloc = con.execute("SELECT COALESCE(SUM(COALESCE(alloc_amount, amount)),0) FROM reimb_links WHERE receipt_id=?", (tid,)).fetchone()[0]
+                if tx["amount"] < alloc - 0.005:
+                    raise ValidationError(f"{alloc:.2f} {ex['currency']} of this reimbursement is linked to expenses: "
+                                          f"the amount can't be lower (unlink or reduce the links first)")
         tx["updated_at"] = now_iso()
         cols = [k for k in TX_FIELDS + ["updated_at"] if k in tx]
         con.execute(f"UPDATE transactions SET {','.join(c + '=?' for c in cols)} WHERE id=?", [tx[k] for k in cols] + [tid])
@@ -614,7 +626,10 @@ def decorate(t: dict) -> dict:
 
 def get_tx(db: Database, tid: int) -> dict | None:
     r = db.one(TX_SELECT + " WHERE t.id=?", (tid,))
-    return decorate(r) if r else None
+    if not r:
+        return None
+    from .reimburse import annotate  # local import: reimburse imports this module
+    return annotate(db, [decorate(r)], links=True)[0]
 
 
 def _tx_where(f: dict) -> tuple[str, list]:
@@ -647,6 +662,25 @@ def _tx_where(f: dict) -> tuple[str, list]:
         where.append("EXISTS (SELECT 1 FROM reconciled_tx rc WHERE rc.transaction_id=t.id)")
     elif f.get("reconciled") in ("0", "no", "false", 0, False):
         where.append("NOT EXISTS (SELECT 1 FROM reconciled_tx rc WHERE rc.transaction_id=t.id)")
+    rb = [x for x in str(f.get("reimb") or "").lower().split(",") if x]  # reimbursement status filter
+    if rb:
+        conds = []
+        if "open" in rb:
+            conds.append(f"(NOT {REIMB_CLOSED_SQL} AND {REIMB_SETTLED_SQL} <= 0.005)")
+        if "partial" in rb:
+            conds.append(f"(NOT {REIMB_CLOSED_SQL} AND {REIMB_SETTLED_SQL} > 0.005)")
+        if "closed" in rb:
+            conds.append(REIMB_CLOSED_SQL)
+        if "any" in rb or "all" in rb:
+            conds.append("1=1")
+        part = f"(t.kind='expense' AND COALESCE(t.reimbursable,0)=1 AND ({' OR '.join(conds)}))" if conds else None
+        alloc = "COALESCE((SELECT SUM(COALESCE(l.alloc_amount, l.amount)) FROM reimb_links l WHERE l.receipt_id=t.id),0)"
+        rc = None
+        if "unallocated" in rb:
+            rc = f"(t.kind='reimbursement' AND t.amount - {alloc} > 0.005)"
+        elif "any" in rb or "all" in rb:
+            rc = "t.kind='reimbursement'"
+        where.append("(" + " OR ".join(x for x in (part, rc) if x) + ")" if (part or rc) else "0=1")
     if f.get("tag"):
         where.append("(',' || t.tags || ',') LIKE ?"); params.append(f"%,{f['tag']},%")
     if f.get("start"):
@@ -670,7 +704,8 @@ def query_tx(db: Database, f: dict) -> tuple[list[dict], int]:
     limit = min(int(f.get("limit") or 100), 5000)
     offset = int(f.get("offset") or 0)
     rows = db.all(f"{TX_SELECT}{w} ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?", params + [limit, offset])
-    return [decorate(r) for r in rows], total
+    from .reimburse import annotate
+    return annotate(db, [decorate(r) for r in rows], links=bool(f.get("with_links"))), total
 
 
 def encode_cursor(t: dict) -> str:
@@ -716,6 +751,8 @@ def page_tx(db: Database, f: dict) -> dict:
     rows = [decorate(r) for r in db.all(f"{TX_SELECT}{kw} ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?", kp + [limit + 1, offset])]
     has_more = len(rows) > limit
     rows = rows[:limit]
+    from .reimburse import annotate
+    annotate(db, rows)  # reimbursement status badges
     out = {"items": rows, "has_more": has_more, "next_cursor": encode_cursor(rows[-1]) if has_more and rows else None}
     if not cur or str(f.get("with_total", "")).lower() in ("1", "true"):
         s = _summary(db, w, params)
