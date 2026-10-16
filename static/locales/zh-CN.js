@@ -839,6 +839,7 @@ i18nAdd("zh-CN", "简体中文", {
 "{card} currently expires {date}. Enter the expiry printed on the new card.": "{card} 当前有效期至 {date}。请输入新卡上印的有效期。",
 "{n} account": "{n} 个账户",
 "{n} accounts": "{n} 个账户",
+"{n} payment(s) to update": "{n} 笔付款待换卡",
 "{n} scheduled payment(s) still use this card and are not confirmed: {names}. Mark the reminder done anyway?": "还有 {n} 笔定期付款在使用此卡且未确认：{names}。仍然标记为完成吗？",
 "{n} selected · {amt}": "已选 {n} 笔 · {amt}",
 "{n} to link": "{n} 笔待关联",

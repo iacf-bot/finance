@@ -859,5 +859,6 @@
  "variable": "金额不定",
  "Variable amounts without a suggestion add 0.": "没有建议金额的不定额项目按 0 计。",
  "Scheduled →": "定时 →",
- "Scheduled remaining: {amount} ({n} item)": "本月待发生定时：{amount}（{n} 笔）"
+ "Scheduled remaining: {amount} ({n} item)": "本月待发生定时：{amount}（{n} 笔）",
+ "{n} payment(s) to update": "{n} 笔付款待换卡"
 }
