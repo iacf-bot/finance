@@ -5,6 +5,8 @@ Credit cards (accounts.stmt_day = 账单日, due_day = 还款日 or due_after_da
   statement date, honouring reconciliation checkpoints); only the latest closed cycle is generated (no backfill)
 * auto-completed when transfers into the card after the statement date add up to the statement amount
   (amount_override if the user typed the real 账单金额); partial payments show the remaining amount
+Card expiry (accounts.card_expiry): a 'card_expiry' reminder from N days (setting card_expiry_lead_days, default 60)
+before the end of the expiry month, listing the schedules charged to the card; see the "card expiry" section below.
 Schedules with post_mode='remind' create a reminder per occurrence instead of a transaction; marking it paid can create
 the transaction from the schedule's template, and the reminder completes when that linked transaction is posted.
 The job is idempotent (unique keys) and only touches accounts/schedules the user configured.
@@ -164,8 +166,8 @@ def refresh(db: Database, on: date | None = None) -> int:
 
 def run(db: Database, on: date | None = None, notify: bool = True) -> dict:
     on = on or today(db)
-    new = generate_cards(db, on)
-    done = refresh(db, on)
+    new = generate_cards(db, on) + generate_expiry(db, on)
+    done = refresh(db, on) + refresh_expiry(db, on)
     sent = notify_due(db, on) if notify else 0
     return {"as_of": on.isoformat(), "created": len(new), "auto_completed": done, "notified": sent}
 
@@ -192,12 +194,18 @@ def _decorate(db: Database, r: dict, on: date) -> dict:
     if r["account_id"]:
         a = db.one("SELECT name, last4 FROM accounts WHERE id=?", (r["account_id"],)) or {}
         r["account_name"], r["account_last4"] = a.get("name"), a.get("last4")
+    if r["kind"] == "card_expiry":
+        r.update(expiry_info(db, r, on))
+        r["paid"] = r["remaining"] = r["statement_amount"] = None
+        r["expired"] = bool(due and due < on)
     return r
 
 
 def lead_days(db: Database, r: dict) -> int:
     """Days before the due date a reminder shows up: schedule.lead_days, card remind_days, else the global setting
     reminder_lead_days (default 10)."""
+    if r.get("kind") == "card_expiry":
+        return expiry_lead(db)
     if r.get("kind") == "schedule" and r.get("schedule_id"):
         s = db.one("SELECT lead_days FROM schedules WHERE id=?", (r["schedule_id"],)) or {}
         if s.get("lead_days") is not None:
@@ -213,6 +221,7 @@ def listing(db: Database, view: str = "open", on: date | None = None) -> dict:
     on = on or today(db)
     if view not in VIEWS:
         raise ReminderError(f"view must be one of {VIEWS}")
+    sync_expiry(db, on)
     rows = [_decorate(db, r, on) for r in db.all("SELECT * FROM reminders ORDER BY due_date, id")]
     counts = {k: sum(1 for r in rows if r["state"] == k) for k in ("upcoming", "later", "overdue", "snoozed", "done")}
     if view == "open":
@@ -231,6 +240,8 @@ def listing(db: Database, view: str = "open", on: date | None = None) -> dict:
 def badge(db: Database, on: date | None = None, rows: list | None = None) -> int:
     """Nav badge: overdue + upcoming within each reminder's lead days."""
     on = on or today(db)
+    if rows is None:
+        sync_expiry(db, on)
     rows = rows if rows is not None else [_decorate(db, r, on) for r in db.all("SELECT * FROM reminders WHERE status='open'")]
     return sum(1 for r in rows if r["state"] in ("overdue", "upcoming"))
 
@@ -268,7 +279,11 @@ def edit(db: Database, rid: int, body: dict) -> dict:
 
 
 def mark_done(db: Database, rid: int, reason: str = "manual") -> dict:
-    return _set(db, rid, status="done", done_reason=reason, done_at=now_iso())
+    out = _set(db, rid, status="done", done_reason=reason, done_at=now_iso())
+    if out["kind"] == "card_expiry" and out.get("pending_count"):
+        out["warning"] = (f"{out['pending_count']} scheduled payment(s) still use this card and are not confirmed: "
+                          + ", ".join(out["pending_names"]))
+    return out
 
 
 def dismiss(db: Database, rid: int) -> dict:
@@ -288,6 +303,8 @@ def mark_paid(db: Database, rid: int, body: dict) -> dict:
     """Mark paid; optionally create the payment: card -> transfer from `from_account_id` to the card (default amount =
     remaining); schedule reminder -> the schedule's transaction (amount editable)."""
     r = get(db, rid)
+    if r["kind"] == "card_expiry":
+        raise ReminderError("A card expiry reminder has no payment: confirm the card and its scheduled payments, or press Done")
     tx = None
     if body.get("create_payment"):
         amount = body.get("amount")
@@ -330,11 +347,16 @@ def digest(db: Database, days: int = 7, include_overdue: bool = True, lang: str 
     on = on or today(db)
     zh = _zh(lang, db)
     rows = listing(db, "open", on)["items"]  # 'open' already excludes items before their lead window
+    # card expiry reminders are listed during their whole lead window (default 60 days), not only the next `days`
     items = [r for r in rows if (r["state"] == "overdue" and include_overdue) or
-             (r["state"] == "upcoming" and r["days_left"] is not None and r["days_left"] <= days)]
+             (r["state"] == "upcoming" and r["days_left"] is not None and (r["days_left"] <= days or r["kind"] == "card_expiry"))]
     from .ingest import fmt_money
     lines = []
     for r in items:
+        if r["kind"] == "card_expiry":
+            r["detail"] = expiry_text(r, zh)
+            lines.append(f"{'⚠️ ' if r['state'] == 'overdue' else ''}💳 {r['detail']}")
+            continue
         amt = r["remaining"] if r["remaining"] is not None else r["statement_amount"]
         due = _d(r["due_date"])
         when = (f"逾期 {-r['days_left']} 天" if zh else f"OVERDUE {-r['days_left']}d") if r["state"] == "overdue" else \
@@ -350,7 +372,40 @@ def digest(db: Database, days: int = 7, include_overdue: bool = True, lang: str 
         msg = "\n".join(lines) if n else f"Nothing due in the next {days} days ✓"
     return {"count": n, "title": title, "message": msg, "items": [
         {k: r.get(k) for k in ("id", "kind", "title", "due_date", "days_left", "state", "statement_amount", "remaining",
-                               "currency", "account_name")} for r in items], "today": on.isoformat()}
+                               "currency", "account_name", "account_last4", "expiry", "expiry_label", "pending_names",
+                               "card_confirmed", "new_expiry_label", "detail")} for r in items], "today": on.isoformat()}
+
+
+_TW = (("已于", "已於"), ("将于", "將於"), ("请更新以下定期付款的卡", "請更新以下定期付款的卡"),
+       ("请录入新卡有效期或确认", "請輸入新卡有效期或確認"))
+
+
+def expiry_text(r: dict, zh: bool, tw: bool = False) -> str:
+    """One line for a card_expiry reminder (notify / Telegram / email); tw = Traditional Chinese (emails)."""
+    if tw:
+        out = expiry_text(r, True)
+        for a, b in _TW:
+            out = out.replace(a, b)
+        return out
+    card = (r.get("title") or r.get("account_name") or "") + (f" ••{r['account_last4']}" if r.get("account_last4") else "")
+    exp, past, names = r.get("expiry_label"), r.get("state") == "overdue", r.get("pending_names") or []
+    if zh:
+        s = f"{card} {'已于' if past else '将于'} {exp} 到期"
+        if names:
+            s += " · 请更新以下定期付款的卡：" + "、".join(names)
+        if not r.get("card_confirmed"):
+            s += " · 请录入新卡有效期或确认"
+        elif r.get("new_expiry_label"):
+            s += f" · 新卡有效期 {r['new_expiry_label']}"
+        return s
+    s = f"{card} {'expired' if past else 'expires'} {exp}"
+    if names:
+        s += " · Update the payment card for: " + ", ".join(names)
+    if not r.get("card_confirmed"):
+        s += " · Enter the new expiry or confirm the card"
+    elif r.get("new_expiry_label"):
+        s += f" · new card expires {r['new_expiry_label']}"
+    return s
 
 
 def notify_due(db: Database, on: date | None = None) -> int:
@@ -374,3 +429,253 @@ def notify_due(db: Database, on: date | None = None) -> int:
             con.executemany("UPDATE reminders SET notified_at=? WHERE id=?", [(now_iso(), i) for i in ids])
         return len(ids)
     return 0
+
+
+# ---------------------------------------------------------------- card expiry 信用卡到期
+# accounts.card_expiry = 'YYYY-MM' (entered as MM/YY; the card works until the END of that month).
+# From `card_expiry_lead_days` (setting, default 60) before that day a 'card_expiry' reminder exists for that expiry
+# (reminders.expiry; one per card + expiry, so a new expiry starts a fresh cycle with fresh confirmations). It lists the
+# active schedules (incl. remind-only) whose template charges the card (template.account_id) so their autopay can be
+# moved to the new card. It completes by itself ('resolved') when BOTH:
+#   * the card is confirmed: a later expiry was entered (renewed), the user acknowledged it (closed / not renewing), or the
+#     account was archived; and
+#   * every linked schedule is confirmed ('card updated') or reassigned to another account (moved off the card).
+# 'Done' (POST /api/reminders/{id}/done) still closes it at once and returns a warning while schedules are unconfirmed.
+EXPIRY_LEAD_DEFAULT = 60
+CARD_STATES = ("renewed", "acknowledged")
+
+
+def parse_expiry(v) -> str | None:
+    """'MM/YY', 'MM/YYYY', 'MM-YY', 'YYYY-MM' -> 'YYYY-MM'; blank -> None. ValueError otherwise."""
+    s = str(v if v is not None else "").strip()
+    if not s:
+        return None
+    m = re.fullmatch(r"(\d{1,2})\s*[/\-.]\s*(\d{2}|\d{4})", s)
+    if m:
+        mo, y = int(m.group(1)), int(m.group(2))
+    else:
+        m = re.fullmatch(r"(\d{4})\s*[/\-.]\s*(\d{1,2})", s)
+        if not m:
+            raise ValueError("Card expiry must be MM/YY (e.g. 08/29)")
+        y, mo = int(m.group(1)), int(m.group(2))
+    if y < 100:
+        y += 2000
+    if not 1 <= mo <= 12 or not 2000 <= y <= 2099:
+        raise ValueError("Card expiry must be MM/YY with a month 01–12 (e.g. 08/29)")
+    return f"{y:04d}-{mo:02d}"
+
+
+def expiry_end(exp: str) -> date:
+    """Last day of the expiry month (the card works through that day)."""
+    y, m = int(exp[:4]), int(exp[5:7])
+    return _dim(y, m, 31)
+
+
+def expiry_label(exp: str | None) -> str | None:
+    return f"{exp[5:7]}/{exp[:4]}" if exp else None
+
+
+def expiry_lead(db: Database) -> int:
+    try:
+        return max(0, min(365, int(db.get_setting("card_expiry_lead_days") or EXPIRY_LEAD_DEFAULT)))
+    except (TypeError, ValueError):
+        return EXPIRY_LEAD_DEFAULT
+
+
+def card_schedules(db: Database, aid: int, on: date | None = None) -> list[dict]:
+    """Active (enabled, not ended) schedules whose transaction is charged to / paid from account `aid`."""
+    from . import schedules
+    on = on or today(db)
+    out = []
+    for s in db.all("SELECT * FROM schedules WHERE enabled=1 ORDER BY name, id"):
+        try:
+            tpl = json.loads(s["template"] or "{}")
+        except ValueError:
+            continue
+        try:
+            if int(tpl.get("account_id") or 0) != int(aid):
+                continue
+        except (TypeError, ValueError):
+            continue
+        d = schedules.decorate(db, dict(s), on)
+        if d["finished"]:
+            continue
+        out.append({"schedule_id": d["id"], "name": d["name"], "post_mode": d["post_mode"], "kind": tpl.get("kind"),
+                    "amount": tpl.get("amount"), "currency": d.get("currency"), "description": d.get("description"),
+                    "next_date": d["next_dates"][0] if d["next_dates"] else None})
+    return out
+
+
+def generate_expiry(db: Database, on: date | None = None) -> list[int]:
+    """Create the card_expiry reminder once a card enters its lead window (idempotent per card + expiry)."""
+    on = on or today(db)
+    lead = expiry_lead(db)
+    new = []
+    for a in db.all("SELECT * FROM accounts WHERE type='credit_card' AND archived=0 AND card_expiry IS NOT NULL AND card_expiry<>''"):
+        try:
+            end = expiry_end(a["card_expiry"])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if on < end - timedelta(days=lead):
+            continue
+        with db.tx() as con:
+            if con.execute("SELECT 1 FROM reminders WHERE kind='card_expiry' AND account_id=? AND expiry=?",
+                           (a["id"], a["card_expiry"])).fetchone():
+                continue
+            new.append(con.execute("""INSERT INTO reminders(kind, account_id, title, due_date, expiry, currency, status,
+                autopay, created_at, updated_at) VALUES('card_expiry',?,?,?,?,?,'open',?,?,?)""",
+                (a["id"], a["name"], end.isoformat(), a["card_expiry"], a["currency"], a.get("autopay") or 0,
+                 now_iso(), now_iso())).lastrowid)
+    return new
+
+
+def expiry_info(db: Database, r: dict, on: date | None = None) -> dict:
+    """Linked schedules with their confirmation, the card confirmation and whether the reminder is resolved."""
+    on = on or today(db)
+    acct = db.one("SELECT id, name, last4, card_expiry, archived FROM accounts WHERE id=?", (r["account_id"],)) or {}
+    checks = {c["schedule_id"]: c for c in db.all("SELECT * FROM card_expiry_checks WHERE reminder_id=?", (r["id"],))}
+    names = {a["id"]: a["name"] for a in db.all("SELECT id, name FROM accounts")}
+    linked = card_schedules(db, r["account_id"], on) if acct else []
+    items, on_card = [], set()
+    for s in linked:
+        on_card.add(s["schedule_id"])
+        c = checks.get(s["schedule_id"])
+        ok = bool(c and c["action"] == "confirmed")
+        items.append({**s, "status": "confirmed" if ok else "pending", "checked_at": c["created_at"] if ok else None})
+    for sid, c in checks.items():
+        if c["action"] == "reassigned" and sid not in on_card:
+            s = db.one("SELECT id, name, template FROM schedules WHERE id=?", (sid,))
+            if not s:
+                continue
+            try:
+                to = int(json.loads(s["template"] or "{}").get("account_id") or 0) or c["to_account_id"]
+            except (TypeError, ValueError):
+                to = c["to_account_id"]
+            items.append({"schedule_id": sid, "name": s["name"], "status": "reassigned", "to_account_id": to,
+                          "to_account_name": names.get(to), "checked_at": c["created_at"]})
+    new_exp = acct.get("card_expiry")
+    renewed = bool(new_exp and r.get("expiry") and new_exp > r["expiry"])
+    state = r.get("card_state") or ("renewed" if renewed else "closed" if acct.get("archived") else None)
+    pending = [i for i in items if i["status"] == "pending"]
+    return {"expiry_label": expiry_label(r.get("expiry")), "card_schedules": items, "pending_count": len(pending),
+            "pending_names": [i["name"] for i in pending], "card_confirmed": state is not None, "card_state_eff": state,
+            "new_expiry": new_exp if renewed else None, "new_expiry_label": expiry_label(new_exp) if renewed else None,
+            "resolved": state is not None and not pending, "account_exists": bool(acct)}
+
+
+def refresh_expiry(db: Database, on: date | None = None) -> int:
+    """Expiry reminders: a later expiry on the account confirms the card ('renewed'); an earlier/removed expiry retires the
+    reminder; resolved ones complete. Idempotent; called by run() and before listing."""
+    on = on or today(db)
+    n = 0
+    for r in db.all("SELECT * FROM reminders WHERE kind='card_expiry' AND status='open'"):
+        acct = db.one("SELECT card_expiry FROM accounts WHERE id=?", (r["account_id"],))
+        kw = None
+        if not acct:
+            kw = {"status": "dismissed", "done_reason": "account_deleted"}
+        elif (acct["card_expiry"] or "") != (r["expiry"] or ""):
+            if acct["card_expiry"] and acct["card_expiry"] > (r["expiry"] or ""):
+                if not r["card_state"]:
+                    _set(db, r["id"], card_state="renewed", card_state_at=now_iso())
+                    r = dict(r, card_state="renewed")
+            else:  # corrected to an earlier month or removed: this cycle no longer applies
+                kw = {"status": "dismissed", "done_reason": "expiry_changed"}
+        if kw is None and expiry_info(db, r, on)["resolved"]:
+            kw = {"status": "done", "done_reason": "resolved"}
+        if kw:
+            with db.tx() as con:
+                con.execute("UPDATE reminders SET status=?, done_reason=?, done_at=?, updated_at=? WHERE id=? AND status='open'",
+                            (kw["status"], kw["done_reason"], now_iso(), now_iso(), r["id"]))
+            n += 1
+    return n
+
+
+def sync_expiry(db: Database, on: date | None = None) -> None:
+    on = on or today(db)
+    generate_expiry(db, on)
+    refresh_expiry(db, on)
+
+
+def _expiry_reminder(db: Database, rid: int) -> dict:
+    r = db.one("SELECT * FROM reminders WHERE id=?", (rid,))
+    if not r:
+        raise KeyError(rid)
+    if r["kind"] != "card_expiry":
+        raise ReminderError("Not a card expiry reminder")
+    return r
+
+
+def _linked_ids(db: Database, r: dict) -> set[int]:
+    return {s["schedule_id"] for s in card_schedules(db, r["account_id"])}
+
+
+def confirm_schedule(db: Database, rid: int, sid: int, undo: bool = False) -> dict:
+    """'Card updated / confirmed' for one linked schedule (e.g. the merchant autopay now uses the new card)."""
+    r = _expiry_reminder(db, rid)
+    with db.tx() as con:
+        if undo:
+            con.execute("DELETE FROM card_expiry_checks WHERE reminder_id=? AND schedule_id=?", (rid, sid))
+        else:
+            if sid not in _linked_ids(db, r):
+                raise ReminderError("That schedule doesn't use this card")
+            con.execute("""INSERT INTO card_expiry_checks(reminder_id, schedule_id, action, from_account_id, created_at)
+                VALUES(?,?,'confirmed',?,?) ON CONFLICT(reminder_id, schedule_id) DO UPDATE SET action='confirmed',
+                to_account_id=NULL, created_at=excluded.created_at""", (rid, sid, r["account_id"], now_iso()))
+    refresh_expiry(db)
+    return get(db, rid)
+
+
+def reassign_schedule(db: Database, rid: int, sid: int, account_id) -> dict:
+    """Move a linked schedule to another account (its template's account), recorded on this reminder."""
+    from . import schedules
+    r = _expiry_reminder(db, rid)
+    if sid not in _linked_ids(db, r):
+        raise ReminderError("That schedule doesn't use this card")
+    try:
+        to = int(account_id)
+    except (TypeError, ValueError):
+        raise ReminderError("Choose the account the schedule should use")
+    a = db.one("SELECT id, archived FROM accounts WHERE id=?", (to,))
+    if not a or a["archived"]:
+        raise ReminderError("Choose an active account")
+    if to == r["account_id"]:
+        raise ReminderError("Choose a different account (or use 'Card updated' if the same card account stays)")
+    s = db.one("SELECT template FROM schedules WHERE id=?", (sid,))
+    tpl = json.loads(s["template"])
+    tpl["account_id"] = to
+    try:
+        schedules.save(db, {"template": tpl}, sid)
+    except schedules.ScheduleError as e:
+        raise ReminderError(str(e))
+    with db.tx() as con:
+        con.execute("""INSERT INTO card_expiry_checks(reminder_id, schedule_id, action, from_account_id, to_account_id, created_at)
+            VALUES(?,?,'reassigned',?,?,?) ON CONFLICT(reminder_id, schedule_id) DO UPDATE SET action='reassigned',
+            to_account_id=excluded.to_account_id, created_at=excluded.created_at""", (rid, sid, r["account_id"], to, now_iso()))
+        # open 'remind only' reminders of that schedule follow it to the new account
+        con.execute("UPDATE reminders SET account_id=?, updated_at=? WHERE kind='schedule' AND schedule_id=? AND status='open'",
+                    (to, now_iso(), sid))
+    refresh_expiry(db)
+    return get(db, rid)
+
+
+def confirm_card(db: Database, rid: int, body: dict) -> dict:
+    """The card itself: action 'renew' (+ expiry MM/YY, later than this reminder's) updates the account's expiry;
+    'acknowledge' (card closed / not renewed / nothing to change); 'undo' clears a manual confirmation."""
+    r = _expiry_reminder(db, rid)
+    action = (body or {}).get("action") or "acknowledge"
+    if action == "renew":
+        exp = parse_expiry((body or {}).get("expiry"))
+        if not exp or exp <= (r["expiry"] or ""):
+            raise ReminderError(f"Enter the new card's expiry, later than {expiry_label(r['expiry'])}")
+        with db.tx() as con:
+            con.execute("UPDATE accounts SET card_expiry=? WHERE id=?", (exp, r["account_id"]))
+        _set(db, rid, card_state="renewed", card_state_at=now_iso())
+    elif action == "acknowledge":
+        _set(db, rid, card_state="acknowledged", card_state_at=now_iso())
+    elif action == "undo":
+        _set(db, rid, card_state=None, card_state_at=None)
+    else:
+        raise ReminderError("action must be renew, acknowledge or undo")
+    refresh_expiry(db)
+    generate_expiry(db)
+    return get(db, rid)

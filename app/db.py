@@ -293,6 +293,12 @@ class Database:
             out = []
             if "reimb_links" not in tables or "alloc_amount" not in {r[1] for r in con.execute("PRAGMA table_info(reimb_links)")}:
                 out.append("reimb_links.alloc_amount")
+            if "accounts" in tables and "card_expiry" not in {r[1] for r in con.execute("PRAGMA table_info(accounts)")}:
+                out.append("accounts.card_expiry")
+            if "reminders" in tables and "expiry" not in {r[1] for r in con.execute("PRAGMA table_info(reminders)")}:
+                out.append("reminders.expiry")
+            if "card_expiry_checks" not in tables:
+                out.append("card_expiry_checks")
             return out
         finally:
             con.close()
@@ -449,6 +455,20 @@ class Database:
             con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rem_card ON reminders(account_id, statement_date) WHERE kind='card'")
             con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rem_sched ON reminders(schedule_id, occurrence_date) WHERE kind='schedule'")
             con.execute("CREATE INDEX IF NOT EXISTS ix_rem_status ON reminders(status, due_date)")
+            # card expiry 信用卡到期 (additive): accounts.card_expiry 'YYYY-MM' (end of that month); one 'card_expiry'
+            # reminder per card + expiry (reminders.expiry), its card confirmation (card_state renewed/acknowledged) and the
+            # per-schedule confirmations of that cycle (card_expiry_checks: confirmed = card updated at the merchant,
+            # reassigned = schedule moved to another account). A new expiry = a new reminder = fresh confirmations.
+            if "card_expiry" not in {r[1] for r in con.execute("PRAGMA table_info(accounts)")}:
+                con.execute("ALTER TABLE accounts ADD COLUMN card_expiry TEXT")
+            rcols = {r[1] for r in con.execute("PRAGMA table_info(reminders)")}
+            for col in ("expiry", "card_state", "card_state_at"):
+                if col not in rcols:
+                    con.execute(f"ALTER TABLE reminders ADD COLUMN {col} TEXT")
+            con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rem_cexp ON reminders(account_id, expiry) WHERE kind='card_expiry'")
+            con.execute("""CREATE TABLE IF NOT EXISTS card_expiry_checks (id INTEGER PRIMARY KEY, reminder_id INTEGER NOT NULL,
+                schedule_id INTEGER NOT NULL, action TEXT NOT NULL, from_account_id INTEGER, to_account_id INTEGER, created_at TEXT,
+                UNIQUE(reminder_id, schedule_id))""")
             # receipt photos 小票 (additive): files under the receipts folder, path stored relative to it
             con.execute("""CREATE TABLE IF NOT EXISTS receipts (
                 id INTEGER PRIMARY KEY, transaction_id INTEGER, rel_path TEXT NOT NULL DEFAULT '', orig_name TEXT,

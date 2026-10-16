@@ -250,6 +250,14 @@ table.upcoming td{padding:5px 6px}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
 .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 tr.over-row td{background:rgba(232,85,62,.07)}
+/* card expiry reminders 信用卡到期 */
+.pill.cx-ok{background:#e3f6ec;color:#17643a}.pill.cx-bad{background:#fde3e3;color:#a11d1d}
+tr.cx-late td{background:#fff6f6}tr.cx-late td:first-child{box-shadow:inset 3px 0 0 #d33}
+.cx-head{margin-bottom:4px}.cx-card{margin:2px 0 4px}.cx-sub{margin-top:6px}
+.cx-list{margin:4px 0 6px;padding-left:18px}.cx-list li{margin:3px 0;line-height:1.9}
+.cx-list li.cx-pending a{font-weight:600}.cx-list li.cx-confirmed a,.cx-list li.cx-reassigned a{color:#4a5469}
+.cx-acts{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:6px}
+select.cx-mv{width:auto;display:inline-block;padding:2px 6px;font-size:12.5px;max-width:200px}
 /* home KPI: scheduled remaining this month + projected month-end */
 .home-cards .card.stat{position:relative;overflow:visible}
 .sched-rem{margin-top:6px;padding-top:5px;border-top:1px dashed #e3e7ee;cursor:pointer;position:relative;outline:none}

@@ -129,7 +129,7 @@ VIEWS.account = async (v, rest, ctx = {}) => {
     const owed = a.is_liability, b = h.balances;
     $('#ahHead').innerHTML = `<div class="ah-top">${inInv ? '<a href="#/investments" class="small" id="ahBack">← Investments</a>' : '<a href="#/accounts" class="small">← Accounts</a>'}</div>
       <div class="ah-main"><div><h2>${isDemoName(a.name) ? '<span class="pill demo">DEMO</span> ' : ''}${esc(a.name)} ${a.last4 ? `<span class="muted small">••${esc(a.last4)}</span>` : ''}</h2>
-        <div class="small muted">${esc(a.type_label)} · ${a.currency}${a.institution ? ' · ' + esc(a.institution) : ''}${a.reconciled_at ? ` · <a href="javascript:void 0" class="rec-link" id="ahRec">✔ Reconciled ${esc(a.reconciled_at.slice(0, 10))}</a>` : ''}</div></div>
+        <div class="small muted">${esc(a.type_label)} · ${a.currency}${a.institution ? ' · ' + esc(a.institution) : ''}${a.type === 'credit_card' && a.card_expiry ? ' · ' + cardExpiryPill(a) : ''}${a.reconciled_at ? ` · <a href="javascript:void 0" class="rec-link" id="ahRec">✔ Reconciled ${esc(a.reconciled_at.slice(0, 10))}</a>` : ''}</div></div>
         <div class="ah-bal"><div class="lbl small muted">${owed ? 'Owed' : 'Balance'}</div><div class="val ${owed ? (a.owed > 0 ? 'neg' : '') : a.balance < 0 ? 'neg' : ''}">${money(owed ? a.owed : a.balance, a.currency)}</div>
         ${a.is_investment ? `<div class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</div>` : ''}</div></div>
       <div class="row ah-acts"><button class="btn pri" id="ahAdd">+ Add 记一笔</button><button class="btn" id="ahSet">⚖️ Set balance</button><button class="btn" id="ahReconcile">✔ Reconcile</button><button class="btn" id="ahEdit">Edit</button>

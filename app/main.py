@@ -173,10 +173,11 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     SETTING_KEYS = ["base_currency", "review_threshold", "default_account_id", "default_ledger_id",
                     "backup_interval_hours", "backup_keep", "schedule_run_time", "schedule_catchup_days", "timezone",
                     "lock_reconciled", "receipts_dir", "receipts_pattern",
-                    "reminder_lead_days", "reminder_notify", "backup_dir", "backup_receipts"]
+                    "reminder_lead_days", "reminder_notify", "backup_dir", "backup_receipts", "card_expiry_lead_days"]
     SETTING_DEFAULTS = {"schedule_run_time": "00:15", "schedule_catchup_days": "90", "timezone": schedules.DEFAULT_TZ, "lock_reconciled": "0",
                         "receipts_dir": "", "receipts_pattern": "{yyyy}/{mm}/{dd}",
-                        "reminder_lead_days": "10", "reminder_notify": "off", "backup_dir": "", "backup_receipts": "1"}
+                        "reminder_lead_days": "10", "reminder_notify": "off", "backup_dir": "", "backup_receipts": "1",
+                        "card_expiry_lead_days": str(reminders.EXPIRY_LEAD_DEFAULT)}
 
     @app.get("/api/meta")
     def meta():
@@ -252,6 +253,10 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                         v = bk.check_dir(str(v or ""))
                     except ValueError as e:
                         raise HTTPException(400, str(e))
+                if k == "card_expiry_lead_days":
+                    if not str(v).strip().isdigit() or not 0 <= int(str(v).strip()) <= 365:
+                        raise HTTPException(400, "Card expiry reminder days must be 0–365")
+                    v = str(int(str(v).strip()))
                 if k == "backup_receipts":
                     v = "0" if str(v).lower() in ("0", "false", "off", "no", "") else "1"
                 if k == "receipts_pattern":
@@ -315,7 +320,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     # ------------------------------------------------------------ accounts
     ACCT_FIELDS = ["group_id", "name", "type", "currency", "opening_balance", "credit_limit", "institution", "last4",
                    "aliases", "note", "archived", "sort", "opening_returns",
-                   "stmt_day", "due_day", "due_after_days", "remind_days", "autopay", "min_pay_pct"]
+                   "stmt_day", "due_day", "due_after_days", "remind_days", "autopay", "min_pay_pct", "card_expiry"]
 
     def _acct_data(body: dict, partial=False) -> dict:
         d = {k: body[k] for k in ACCT_FIELDS if k in body}
@@ -344,6 +349,11 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                     raise HTTPException(400, f"{k} must be a whole number")
                 if d[k] is not None and not lo <= d[k] <= hi:
                     raise HTTPException(400, f"{k} must be between {lo} and {hi}")
+        if "card_expiry" in d:
+            try:
+                d["card_expiry"] = reminders.parse_expiry(d["card_expiry"])
+            except ValueError as e:
+                raise HTTPException(400, str(e))
         if "autopay" in d:
             d["autopay"] = 1 if d["autopay"] in (True, 1, "1", "true", "on") else 0
         if "opening_balance" in d and d["opening_balance"] is None:
@@ -369,6 +379,8 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         with db.tx() as con:
             cols = list(d)
             aid = con.execute(f"INSERT INTO accounts({','.join(cols)}) VALUES({','.join('?' * len(cols))})", [d[c] for c in cols]).lastrowid
+        if d.get("card_expiry"):
+            reminders.sync_expiry(db)
         if opening:
             try:
                 ledger.record_opening_balance(db, aid, opening, body.get("start_date"))
@@ -384,6 +396,8 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         if d:
             with db.tx() as con:
                 con.execute(f"UPDATE accounts SET {','.join(k + '=?' for k in d)} WHERE id=?", list(d.values()) + [aid])
+            if {"card_expiry", "archived", "type"} & set(d):
+                reminders.sync_expiry(db)  # a renewed card confirms its expiry reminder; a new expiry starts a new cycle
         result = None
         # Editing the balance itself records an adjustment (like 随手记's 余额变更) instead of rewriting the opening balance.
         if body.get("balance") not in (None, ""):
@@ -802,6 +816,21 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     @app.post("/api/reminders/{rid}/dismiss")
     def dismiss_reminder(rid: int):
         return _rem(lambda: reminders.dismiss(db, rid))
+
+    @app.post("/api/reminders/{rid}/schedules/{sid}/confirm")
+    def confirm_reminder_schedule(rid: int, sid: int, body: dict = Body(default={})):
+        """Card expiry: this scheduled payment now uses the new card (or nothing to change)."""
+        return _rem(lambda: reminders.confirm_schedule(db, rid, sid, bool((body or {}).get("undo"))))
+
+    @app.post("/api/reminders/{rid}/schedules/{sid}/reassign")
+    def reassign_reminder_schedule(rid: int, sid: int, body: dict = Body(...)):
+        """Card expiry: move this scheduled payment to another account."""
+        return _rem(lambda: reminders.reassign_schedule(db, rid, sid, (body or {}).get("account_id")))
+
+    @app.post("/api/reminders/{rid}/card")
+    def confirm_reminder_card(rid: int, body: dict = Body(default={})):
+        """Card expiry: {action: renew, expiry: 'MM/YY'} | {action: acknowledge} | {action: undo}."""
+        return _rem(lambda: reminders.confirm_card(db, rid, body or {}))
 
     @app.post("/api/reminders/{rid}/reopen")
     def reopen_reminder(rid: int):
