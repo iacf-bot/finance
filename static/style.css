@@ -258,3 +258,13 @@ tr.cx-late td{background:#fff6f6}tr.cx-late td:first-child{box-shadow:inset 3px 
 .cx-list li.cx-pending a{font-weight:600}.cx-list li.cx-confirmed a,.cx-list li.cx-reassigned a{color:#4a5469}
 .cx-acts{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:6px}
 select.cx-mv{width:auto;display:inline-block;padding:2px 6px;font-size:12.5px;max-width:200px}
+/* home KPI: scheduled remaining this month + projected month-end */
+.home-cards .card.stat{position:relative;overflow:visible}
+.sched-rem{margin-top:6px;padding-top:5px;border-top:1px dashed #e3e7ee;cursor:pointer;position:relative;outline:none}
+.sched-rem:hover > .small:first-child,.sched-rem:focus > .small:first-child{text-decoration:underline dotted}
+.sr-pop{display:none;position:absolute;left:0;top:100%;z-index:30;min-width:280px;max-width:360px;max-height:320px;overflow:auto;
+  background:#fff;border:1px solid #dfe3ea;border-radius:10px;box-shadow:0 8px 24px rgba(20,30,50,.14);padding:8px 10px;text-align:left;cursor:default}
+@media (hover:hover){.sched-rem:hover .sr-pop{display:block}}
+.sched-rem.open .sr-pop{display:block}
+.sr-pop table.t td{padding:3px 6px}
+@media (max-width:700px){.sr-pop{position:static;max-width:none;min-width:0;box-shadow:none;margin-top:6px}}

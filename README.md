@@ -468,6 +468,24 @@ Compare an account with a bank/card statement and lock the balance at that date.
 * **Home 首页** (first in the sidebar, and the page you land on after login or at `/`):
   * Cards for the selected month's Income, Expense, Net (= income − expense) and Investment income. They follow the Reports rules.
     The ‹ Oct 2026 › switcher changes the month.
+  * **Scheduled remaining 本月待发生定时** (Income, Expense and Net cards): for example "🔁 Scheduled remaining: $505.99
+    (7 items)" with "Projected month-end: $3,296.46" (= actual so far + scheduled remaining). Hovering over the line
+    (or clicking / Enter on touch and keyboard) lists the items: date, name and amount. The line only appears when
+    something is left.
+    **What counts as remaining:**
+    * Every occurrence of an **enabled** schedule whose transaction kind is **expense** or **income**. Transfers,
+      reimbursements and the investment kinds never count.
+    * Its date runs from **today** (counted if it hasn't run yet) through the **last day of the month**. A future month
+      counts from the 1st; a past month has nothing remaining.
+    * It must be inside the schedule's start/end date and max count, and not before a resumed schedule's skip date.
+    * It must **not be generated yet**. A generated occurrence is already in the actual numbers if it was posted, or in
+      *To review*, so it's not counted twice. Paused schedules don't count.
+    * **Remind-only** schedules count (they are bills you will pay) until that date's reminder is paid, done or
+      dismissed.
+    * Variable-amount schedules count their suggested amount. Without one they are listed but add 0.
+    * Amounts are converted to the base currency with the same rates as the KPIs.
+    * The stats rules match the KPIs: a reimbursable expense counts 0 and a reimbursement is never income.
+    * The ledger filter applies (by the template's ledger, else the default ledger).
   * The quick-add box (Add / ✎ Review) and a **+ Detailed 详细记账** button for the full form.
   * Below that, the month's transactions, newest first. Scrolling keeps loading older months.
   * After you save anything, the cards and the list refresh.
@@ -485,6 +503,10 @@ Compare an account with a bank/card statement and lock the balance at that date.
     The first page also returns `total` and `summary` (count, income, expense) for the whole filtered set. `offset=` still works.
     The default limit is now 50 (max 500); the CSV export is unlimited.
   * `GET /api/summary/month?month=YYYY-MM` gives income, expense, net, investment_income, prev/next and count.
+    It also returns `scheduled` {from, to, currency, income, expense, net, income_count, expense_count, count,
+    unknown_amount_count, items[{date, schedule_id, name, kind, amount, currency, amount_base, post_mode,
+    variable_amount, account_name}]} and `projected` {income, expense, net}. `GET /api/dashboard` has the same
+    `scheduled_remaining`.
   * `GET /api/accounts/{id}/history?period=1M|3M|6M|1Y|YTD|ALL` (or `start`/`end`) also takes `q`, `category_id`, `before` and `limit`.
     It returns items with `running_balance`/`running_shown`/`account_effect`, plus `balances` {opening, closing, inflow, outflow}.
   * New indexes: `transactions(date,id)`, `(account_id,date,id)` and `(to_account_id,date,id)`.

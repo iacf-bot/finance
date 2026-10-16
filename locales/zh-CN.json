@@ -851,5 +851,14 @@
  "Valid through the end of that month. You'll be reminded to move autopayments to the new card before it expires.": "有效至该月月底。到期前会提醒你把自动扣款换到新卡。",
  "Valid through the end of that month": "有效至该月月底",
  "Expired {date}": "已于 {date} 到期",
- "Expires {date}": "有效期至 {date}"
+ "Expires {date}": "有效期至 {date}",
+ "Scheduled remaining: {amount} ({n} items)": "本月待发生定时：{amount}（{n} 笔）",
+ "Projected month-end: {amount}": "预计月底：{amount}",
+ "Scheduled, not posted yet ({from} – {to})": "已安排、尚未入账（{from} – {to}）",
+ "remind only": "仅提醒",
+ "variable": "金额不定",
+ "Variable amounts without a suggestion add 0.": "没有建议金额的不定额项目按 0 计。",
+ "Scheduled →": "定时 →",
+ "Scheduled remaining: {amount} ({n} item)": "本月待发生定时：{amount}（{n} 笔）",
+ "{n} payment(s) to update": "{n} 笔付款待换卡"
 }

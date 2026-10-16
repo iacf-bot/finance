@@ -19,6 +19,27 @@ function homeRowHtml(t) {
 function bindHomeRows(root, after) {
   $$('.hrow[data-tx]', root).forEach(r => { if (r._b) return; r._b = 1; r.onclick = () => openTx(+r.dataset.tx, after); r.onkeydown = e => { if (e.key === 'Enter') openTx(+r.dataset.tx, after); }; });
 }
+/* scheduled income/expense still to come this month (active schedules, see README) + projected month-end */
+function schedRemLine(sc, which, projected) {
+  const items = sc.items.filter(i => which === 'net' || i.kind === which);
+  if (!items.length) return '';
+  const cur = sc.currency;
+  const amt = which === 'net' ? `${sc.net >= 0 ? '+' : '−'}${money(Math.abs(sc.net), cur)}` : money(sc[which], cur);
+  const rows = items.map(i => `<tr><td class="nowrap">${esc(i.date.slice(5, 10))}</td><td>${esc(i.name)}${i.post_mode === 'remind' ? ` <span class="pill">⏰ ${t('remind only')}</span>` : ''}</td>
+    <td class="right nowrap ${i.kind === 'income' ? 'pos' : 'neg'}">${i.amount == null ? `<span class="muted">${t('variable')}</span>` : (which === 'net' ? (i.kind === 'income' ? '+' : '−') : '') + money(i.amount, i.currency)}${i.amount != null && i.currency !== cur ? `<div class="small muted">≈ ${money(i.amount_base, cur)}</div>` : ''}</td></tr>`).join('');
+  return `<div class="sched-rem" tabindex="0" role="button" aria-haspopup="true" aria-expanded="false">
+    <div class="small">🔁 ${esc(t(items.length === 1 ? 'Scheduled remaining: {amount} ({n} item)' : 'Scheduled remaining: {amount} ({n} items)', {amount: amt, n: items.length}))}</div>
+    <div class="small muted">${esc(t('Projected month-end: {amount}', {amount: money(projected, cur)}))}</div>
+    <div class="sr-pop"><div class="small muted">${esc(t('Scheduled, not posted yet ({from} – {to})', {from: sc.from.slice(5), to: sc.to.slice(5)}))}</div><table class="t small">${rows}</table>
+    ${sc.unknown_amount_count && items.some(i => i.amount == null) ? `<div class="small muted">${t('Variable amounts without a suggestion add 0.')}</div>` : ''}<a class="small" href="#/scheduled">${t('Scheduled →')}</a></div></div>`;
+}
+function bindSchedRem(root) {
+  $$('.sched-rem', root).forEach(el => {
+    const set = on => { $$('.sched-rem.open', root).forEach(x => { if (x !== el) { x.classList.remove('open'); x.setAttribute('aria-expanded', 'false'); } }); el.classList.toggle('open', on); el.setAttribute('aria-expanded', String(on)); };
+    el.onclick = e => { if (e.target.closest('a')) return; set(!el.classList.contains('open')); };
+    el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); set(!el.classList.contains('open')); } if (e.key === 'Escape') set(false); };
+  });
+}
 VIEWS.home = async (v) => {
   const month = S.homeMonth || thisMonth();
   const isNow = month === thisMonth();
@@ -36,9 +57,11 @@ VIEWS.home = async (v) => {
   api(`/api/summary/month?month=${month}${lq}`).then(s => {
     $('#hmPrev').onclick = () => go(s.prev); $('#hmNext').onclick = () => go(s.next);
     const card = (lbl, val, cls, extra = '') => `<div class="card stat"><div class="lbl">${lbl}</div><div class="val ${cls}">${money(val, s.currency)}</div>${extra}</div>`;
-    $('#hmCards').innerHTML = card('Income', s.income, 'pos') + card('Expense', s.expense, 'neg')
-      + card('Net', s.net, s.net >= 0 ? 'pos' : 'neg', `<div class="small muted">${s.count} transactions</div>`)
+    const sc = s.scheduled && s.scheduled.count ? s.scheduled : null, pj = s.projected || {};
+    $('#hmCards').innerHTML = card('Income', s.income, 'pos', sc ? schedRemLine(sc, 'income', pj.income) : '') + card('Expense', s.expense, 'neg', sc ? schedRemLine(sc, 'expense', pj.expense) : '')
+      + card('Net', s.net, s.net >= 0 ? 'pos' : 'neg', `<div class="small muted">${s.count} transactions</div>${sc ? schedRemLine(sc, 'net', pj.net) : ''}`)
       + card('Investment income', s.investment_income, s.investment_income >= 0 ? 'pos' : 'neg', '<div class="small muted">not part of income/expense</div>');
+    bindSchedRem($('#hmCards'));
     return api(`/api/reports/tax-tips?start=${month}-01&end=${month}-31${lq}`).then(tt => {  // only when recorded
       const x = tt.totals; if (x.tax_count || x.tip_count) $('#hmCards .card.stat:nth-child(2)')?.insertAdjacentHTML('beforeend', taxTipLine(x, tt.currency));
     }).catch(() => {});

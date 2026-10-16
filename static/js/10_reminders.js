@@ -27,6 +27,7 @@ function remExpBody(r) {
     ${r.state !== 'done' ? `<div class="small muted">${t('This reminder stops once the card is confirmed and every scheduled payment is updated or moved.')}</div>` : ''}`;
 }
 function remLine(r) {
+  if (r.kind === 'card_expiry') return `<div class="row" style="justify-content:space-between;padding:4px 0"><span>💳 <b>${esc(r.title || '')}</b> <span class="${r.expired ? 'neg' : 'warn-t'}">${esc(r.expired ? t('Card expired {date}', {date: r.expiry_label}) : t('Card expires {date}', {date: r.expiry_label}))}</span> ${r.state === 'overdue' ? `<span class="pill cx-bad">${t('Expired')}</span>` : remWhen(r)}</span><span class="small muted">${r.pending_count ? esc(t('{n} payment(s) to update', {n: r.pending_count})) : ''}</span></div>`;
   const amt = r.remaining ?? r.statement_amount;
   return `<div class="row" style="justify-content:space-between;padding:4px 0"><span>${r.kind === 'card' ? '💳' : '🔁'} <b>${esc(r.title || '')}</b> <span class="small muted">${esc(r.due_date)}</span> ${remWhen(r)}</span><b>${amt ? money(amt, r.currency) : ''}</b></div>`;
 }
