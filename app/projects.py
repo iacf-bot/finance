@@ -230,17 +230,19 @@ def _budget_base(db: Database, p: dict, plan: bool = True) -> float | None:
 
 
 def _reimbursable(db: Database, pid: int, s: str, e: str, ledger_id=None) -> dict:
-    """Reimbursable spending 可报销 in the project (excluded from expense totals), base currency."""
+    """Reimbursable spending 可报销 in the project that is not closed yet (excluded from expense totals), base currency.
+    outstanding = expected − reimbursed. Closed items count in the totals with their unreimbursed part (Reports rule)."""
     base = db.get_setting("base_currency", "USD"); rates = ledger.fx_rates(db)
     cond, params = "t.project_id=? AND t.status='posted' AND t.kind='expense' AND COALESCE(t.reimbursable,0)=1 " \
-                   "AND COALESCE(t.reimb_writeoff,0)=0 AND t.date >= ? AND t.date < ?", [pid, s, e]
+                   f"AND NOT {ledger.REIMB_CLOSED_SQL} AND t.date >= ? AND t.date < ?", [pid, s, e]
     if ledger_id:
         cond += " AND t.ledger_id=?"; params.append(ledger_id)
     tot = out = 0.0
     n = 0
-    for r in db.all(f"SELECT t.amount, t.currency, {ledger.REIMB_SETTLED_SQL} settled FROM transactions t WHERE {cond}", params):
+    for r in db.all(f"SELECT t.amount, t.currency, {ledger.REIMB_EXPECTED_SQL} expected, {ledger.REIMB_SETTLED_SQL} settled "
+                    f"FROM transactions t WHERE {cond}", params):
         tot += ledger.convert(r["amount"], r["currency"], base, rates)
-        out += ledger.convert(max(r["amount"] - r["settled"], 0), r["currency"], base, rates)
+        out += ledger.convert(max(r["expected"] - r["settled"], 0), r["currency"], base, rates)
         n += 1
     return {"amount": round(tot, 2) + 0.0, "outstanding": round(out, 2) + 0.0, "count": n}
 

@@ -224,6 +224,19 @@ table.upcoming td{padding:5px 6px}
 .rb-flt{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}.rb-flt select,.rb-flt input{width:auto}
 .rb-bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #eee;padding:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .rb-links{font-size:12px;color:#666}
+/* reimbursement links 报销关联 */
+.rb-open,.pill.rb-open{background:#fdecea;color:#c23b2c}.rb-closed,.pill.rb-closed{background:#e3f6ee;color:#0f8a5f}
+.pill.rb-partial{background:#fff3dc;color:#9a6200}.pill.rb-un{background:#fff3dc;color:#9a6200}
+.warn-t{color:#9a6200}
+.rb-links .rb-link{display:inline-flex;align-items:center;gap:4px;background:#f3f7f8;border:1px solid #e1ecef;border-radius:8px;padding:1px 4px 1px 7px;margin:2px 4px 2px 0;white-space:nowrap}
+.rb-link .lnk{border:0;background:none;cursor:pointer;padding:0 3px;font-size:12px;color:#5b6b7a;line-height:1.4}
+.rb-link .lnk:hover{color:#127a8a}.rb-link .lnk.danger:hover{color:#c23b2c}
+.rb-states .chip .cnt{font-size:11px;opacity:.75;margin-left:2px}
+.rb-head{background:#f7f8fa;border-radius:10px;padding:8px 12px;margin-bottom:8px;display:flex;flex-direction:column;gap:3px}
+.rb-mine{margin:4px 0 8px}.rb-tools{margin:6px 0}.rb-tools input[type=search]{max-width:260px}
+.rb-cands{max-height:52vh;overflow:auto}.rb-cands .rb-amt{width:96px;text-align:right}
+.rb-cands tr.rb-best td{background:#f4fbf7}.rb-match .pill{font-size:10px}
+.rb-linkbox{border:1px dashed #cfe3e7;border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
 .rb-bar{padding-right:84px}
 .pr-table tr.pr-acc{cursor:pointer}.pr-table tr.pr-acc:hover{background:var(--hover,#f4f6fa)}
 .pr-table tr.ret-cur td{border-top:1px dashed #d8dce4}

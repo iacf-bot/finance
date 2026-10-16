@@ -57,8 +57,19 @@ function txDesc(t) {
   const bits = [t.merchant_name, t.member_name, t.project_name].filter(Boolean).map(esc);
   const tags = (t.tags || '').split(',').filter(Boolean).map(x => `<span class="pill">#${esc(x)}</span>`).join(' ');
   const demo = isDemoName(t.account_name) || /^\[DEMO\]/.test(t.note || '') ? '<span class="pill demo">DEMO</span> ' : '';
-  const rb = t.kind === 'expense' && t.reimbursable ? `<span class="pill reimb" title="Reimbursable — not counted as an expense">${t.reimb_writeoff ? '已核销' : '可报销'}${t.reimb_payer ? ' · ' + esc(t.reimb_payer) : ''}</span> ` : t.kind === 'reimbursement' ? '<span class="pill reimb">报销到账</span> ' : '';
+  const rb = t.kind === 'expense' && t.reimbursable ? txReimbPill(t) : t.kind === 'reimbursement' ? txReimbPill(t) : '';
   return `<div>${demo}${rb}<b>${main}</b> ${tags}</div><div class="small muted">${t.kind !== 'transfer' ? esc(t.account_name || '— no account —') + ' · ' : ''}${bits.join(' · ')}${t.note ? ' · ' + esc(t.note.slice(0, 80)) : ''}${t.attachment ? ' · 📎' : ''}</div>`;
+}
+/* reimbursement status badge in transaction lists: expense open / partial / closed, reimbursement unallocated money */
+function txReimbPill(x) {
+  if (x.kind === 'reimbursement') {
+    const un = x.reimb_unallocated;
+    if (un === undefined) return '';
+    return un > 0.005 ? `<span class="pill reimb rb-un" title="Part of this reimbursement is not linked to an expense yet">${t('Unallocated')} ${money(un, x.currency)}</span> ` : (x.reimb_link_count ? `<span class="pill reimb" title="Fully linked to expenses">🔗 ${t('Linked')}</span> ` : '');
+  }
+  const stt = x.reimb_state || 'open';
+  const lbl = {open: 'Reimbursable', partial: 'Partly reimbursed', closed: x.reimb_closed_by === 'written_off' ? 'Written off' : 'Reimbursed'}[stt];
+  return `<span class="pill reimb rb-${stt}" title="${stt === 'closed' ? 'Closed: only the part not reimbursed counts as an expense' : 'Reimbursable — not counted as an expense while open'}">${lbl}${x.reimb_payer ? ' · ' + esc(x.reimb_payer) : ''}</span> `;
 }
 function txTable(rows, {compact = false, select = false, tbodyId = ''} = {}) {
   if (!rows.length && !tbodyId) return '<div class="empty">No transactions</div>';
@@ -185,7 +196,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
         <label class="f"><span>Reimburse from (company / person)</span><input name="reimb_payer" list="dlPayer" value="${esc(t.reimb_payer || '')}"></label>
         <label class="f"><span>Expected amount <small class="muted">(default = amount)</small></span><input name="reimb_expected" type="number" step="0.01" inputmode="decimal" value="${t.reimb_expected ?? ''}"></label>
         <label class="f full"><span>Reimbursement note</span><input name="reimb_note" value="${esc(t.reimb_note || '')}"></label></div></div>
-    <div class="full small muted" data-show="reimbursement">💡 To settle reimbursable expenses (and link them), use <a href="#/reimb">Reimbursements</a> → select → <b>Record reimbursement</b>. A receipt entered here is not income and isn't linked.</div>
+    ${id ? '<div class="full rb-linkbox" id="rbLinkBox" hidden></div>' : '<div class="full small muted" data-show="reimbursement">💡 A reimbursement is not income. After saving, link it to the reimbursable expenses it pays back (you can also do that later here or in Reimbursements).</div>'}
     <label class="f" id="prWrap" style="display:none"><span>Investment: counts as</span><select name="pr_class">${[['', 'Auto'], ['principal', 'Principal'], ['returns', 'Returns'], ['unexplained', 'Unexplained']].map(([v, l]) => `<option value="${v}" ${((t.pr_class === 'other' ? 'unexplained' : t.pr_class) || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">Only for investment accounts, e.g. mark a deposit as returns.</span></label>
     <label class="f" data-show="buy sell dividend invest_fee"><span>Ticker</span><input name="ticker" value="${esc(t.ticker || '')}" placeholder="AAPL, VTI, 600519.SS, BTC-USD"></label>
     <label class="f" data-show="buy sell"><span>Shares</span><input name="shares" type="number" step="any" inputmode="decimal" value="${t.shares ?? ''}"></label>
@@ -288,6 +299,8 @@ async function openTx(id, after, preset = {}, opts = {}) {
   if (!document.getElementById('dlPayer')) document.body.insertAdjacentHTML('beforeend', '<datalist id="dlPayer"></datalist>');
   api('/api/reimbursements?status=all').then(d => { $('#dlPayer').innerHTML = d.payers.map(p => `<option value="${esc(p)}">`).join(''); }).catch(() => {});
   sync();
+  const lbox = $('#rbLinkBox', bg);
+  if (lbox && (t.kind === 'reimbursement' || (t.kind === 'expense' && t.reimbursable))) rbLinkBox(lbox, id, () => { after ? after() : route(); }).catch(() => {});
   /* receipt photos: new tx = fill the form from OCR and attach on save; existing tx = attach right away */
   const rcIds = [...(opts.receipt_ids || [])]; let rcCount = (opts.receipts || []).length;
   if (id && $('#rcThumbs', bg)) api(`/api/transactions/${id}/receipts`).then(l => { rcCount = l.length; $('#rcThumbs', bg).innerHTML = rcThumbsHtml(l); }).catch(() => {});
@@ -342,7 +355,14 @@ async function openTx(id, after, preset = {}, opts = {}) {
         $$('.unsure', bg).forEach(x => x.classList.remove('unsure')); const pb = $('.prefill-banner', bg); if (pb) pb.remove();
         $('.modal header h2', bg).textContent = `New transaction · ${saved} saved`;
         form.amount.focus();
-      } else { bg.close(); toast(approve ? 'Approved ✓' : 'Saved'); }
+      } else {
+        bg.close(); toast(approve ? 'Approved ✓' : 'Saved');
+        // a new reimbursement: offer to link it to the open reimbursable expenses it pays back
+        if (isNew && kind === 'reimbursement' && res && res.status === 'posted') {
+          const sg = await api('/api/reimbursements/suggest?reimbursement_id=' + res.id + '&limit=1').catch(() => null);
+          if (sg && sg.items.length) rbLinkDialog({side: 'reimb', id: res.id, after: () => { after ? after() : route(); }});
+        }
+      }
       if (res && res.reconcile_warning) toast('Saved — note: ' + res.reconcile_warning + '. Today\'s balance is unchanged; see the account\'s reconciliation history for drift.');
     } finally { busy = false; }
   };

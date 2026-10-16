@@ -228,11 +228,23 @@ def export_csv(rows: list[dict]) -> str:
     buf = io.StringIO()
     cols = ["id", "date", "kind", "amount", "currency", "account_name", "to_account_name", "to_amount",
             "parent_category_name", "category_name", "merchant_name", "member_name", "project_name", "tags", "note",
-            "source", "status", "ticker", "shares", "price", "fee", "orig_amount", "orig_currency", "ledger_name", "tax_amount", "tip_amount", "tax_rate", "subtotal"]
+            "source", "status", "ticker", "shares", "price", "fee", "orig_amount", "orig_currency", "ledger_name", "tax_amount", "tip_amount", "tax_rate", "subtotal",
+            "reimbursable", "reimb_state", "reimb_reimbursed", "reimb_outstanding", "reimb_counted", "reimb_unallocated", "reimb_links"]
     w = csv.writer(buf)
     w.writerow(cols)
     for r in rows:
         r = dict(r)
+        # reimbursements 报销: state + amounts, and links as "#<other transaction id>=<amount>" separated by ";"
+        if r.get("kind") == "expense" and r.get("reimbursable"):
+            r["reimb_reimbursed"] = r.get("reimb_settled")
+            r["reimb_links"] = "; ".join(f"#{l['receipt_id']}={l['amount']:.2f}" for l in r.get("reimb_links") or [])
+        elif r.get("kind") == "reimbursement":
+            r["reimb_state"] = None
+            r["reimb_links"] = "; ".join(f"#{l['expense_id']}={l['alloc_amount']:.2f}" for l in r.get("reimb_links") or [])
+        else:
+            r["reimb_links"] = None
+        if r.get("kind") != "expense":
+            r["reimbursable"] = None
         if r.get("tax_amount") is not None or r.get("tip_amount") is not None:  # blank when neither was recorded
             r["subtotal"] = round((r.get("amount") or 0) - (r.get("tax_amount") or 0) - (r.get("tip_amount") or 0), 2)
         w.writerow(["" if r.get(c) is None else r.get(c) for c in cols])

@@ -542,8 +542,60 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             raise HTTPException(400, str(e))
 
     @app.get("/api/reimbursements/receipts")
-    def reimb_receipts(limit: int = 100):
-        return reimburse.receipts(db, limit)
+    def reimb_receipts(limit: int = 100, unallocated: bool = False):
+        """Reimbursements (newest first) with allocated / unallocated and links. ?unallocated=1: only those with money left."""
+        return reimburse.receipts(db, limit, unallocated_only=unallocated)
+
+    @app.get("/api/reimbursements/receipts/{rid}")
+    def reimb_receipt(rid: int):
+        try:
+            return reimburse.receipt(db, rid)
+        except KeyError:
+            raise HTTPException(404, "Reimbursement not found")
+
+    @app.get("/api/reimbursements/links")
+    def reimb_links(expense_id: int | None = None, reimbursement_id: int | None = None):
+        """Links between reimbursable expenses and reimbursements (filter by either side)."""
+        return reimburse.list_links(db, expense_id, reimbursement_id)
+
+    @app.post("/api/reimbursements/links")
+    def reimb_link(body: dict = Body(...)):
+        """Link (all or nothing): {expense_id, reimbursement_id, amount?, alloc_amount?} or
+        {reimbursement_id, items: [{expense_id, amount?}]} or {expense_id, items: [{reimbursement_id, amount?}]}.
+        amount = part of the expense (its currency), default = min(outstanding, unallocated); alloc_amount = part of the
+        reimbursement (its currency; only needed across currencies)."""
+        try:
+            return reimburse.link(db, body or {})
+        except (ValueError, ledger.ValidationError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.put("/api/reimbursements/links/{lid}")
+    def reimb_link_update(lid: int, body: dict = Body(...)):
+        """{amount?, alloc_amount?}"""
+        try:
+            return reimburse.update_link(db, lid, body or {})
+        except KeyError:
+            raise HTTPException(404, "Link not found")
+        except (ValueError, ledger.ValidationError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/reimbursements/links/{lid}")
+    def reimb_unlink(lid: int):
+        try:
+            return reimburse.unlink(db, lid)
+        except KeyError:
+            raise HTTPException(404, "Link not found")
+
+    @app.get("/api/reimbursements/suggest")
+    def reimb_suggest(reimbursement_id: int | None = None, expense_id: int | None = None, limit: int = 50):
+        """Link candidates, best match first: open expenses for a reimbursement, or reimbursements with unallocated
+        money for an expense. Each has score, match (amount/date/payer), default_amount (+ default_alloc)."""
+        try:
+            return reimburse.suggest(db, reimbursement_id, expense_id, limit)
+        except KeyError:
+            raise HTTPException(404, "Reimbursement not found")
+        except (ValueError, ledger.ValidationError) as e:
+            raise HTTPException(400, str(e))
 
     @app.post("/api/reimbursements/receipts")
     def reimb_record(body: dict = Body(...)):
@@ -570,9 +622,25 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
         except ledger.ValidationError as e:
             raise HTTPException(400, str(e))
 
+    @app.post("/api/reimbursements/{tid}/close")
+    def reimb_close(tid: int):
+        """Close an expense by hand: the outstanding rest is written off and counts as a personal expense."""
+        try:
+            return reimburse.write_off(db, tid)
+        except ledger.ValidationError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/reimbursements/{tid}/reopen")
+    def reimb_reopen(tid: int):
+        """Undo a manual close (write-off)."""
+        try:
+            return reimburse.write_off(db, tid, undo=True)
+        except ledger.ValidationError as e:
+            raise HTTPException(400, str(e))
+
     @app.get("/api/transactions/export.csv")
     def export_tx(request: Request):
-        f = dict(request.query_params); f["limit"] = 100000
+        f = dict(request.query_params); f["limit"] = 100000; f["with_links"] = "1"
         rows, _ = ledger.query_tx(db, f)
         return Response(importers.export_csv(rows), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="transactions-{date.today()}.csv"'})
