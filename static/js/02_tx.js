@@ -191,11 +191,12 @@ async function openTx(id, after, preset = {}, opts = {}) {
         <label class="f"><span>Tip</span><input name="tip_amount" type="number" step="0.01" min="0" inputmode="decimal" value="${ttConv(t, t.tip_amount)}" placeholder="—"></label>
         <label class="f"><span>Tip %</span><input name="tip_pct" type="number" step="0.1" min="0" inputmode="decimal" placeholder="—"></label>
       </div><div class="small muted" id="ttSub"></div></details>
-    <div class="full reimb-box" data-show="expense"><label class="chk"><input type="checkbox" name="reimbursable" ${t.reimbursable ? 'checked' : ''}> <b>Reimbursable</b> <span class="small muted">— not counted as an expense in reports; settle it in</span></label>
+    <div class="full reimb-box" data-show="expense"><label class="chk"><input type="checkbox" name="reimbursable" ${t.reimbursable ? 'checked' : ''}> <b>Reimbursable</b> <span class="small muted">— not counted as an expense while open; link the reimbursements that pay it back after saving</span></label>
       <div class="reimb-fields form" ${t.reimbursable ? '' : 'hidden'}>
         <label class="f"><span>Reimburse from (company / person)</span><input name="reimb_payer" list="dlPayer" value="${esc(t.reimb_payer || '')}"></label>
         <label class="f"><span>Expected amount <small class="muted">(default = amount)</small></span><input name="reimb_expected" type="number" step="0.01" inputmode="decimal" value="${t.reimb_expected ?? ''}"></label>
         <label class="f full"><span>Reimbursement note</span><input name="reimb_note" value="${esc(t.reimb_note || '')}"></label></div></div>
+    <label class="f" data-show="reimbursement"><span>Paid back by (company / person)</span><input name="rb_from" list="dlPayer" value="${esc(t.kind === 'reimbursement' ? t.reimb_payer || '' : '')}"></label>
     ${id ? '<div class="full rb-linkbox" id="rbLinkBox" hidden></div>' : '<div class="full small muted" data-show="reimbursement">💡 A reimbursement is not income. After saving, link it to the reimbursable expenses it pays back (you can also do that later here or in Reimbursements).</div>'}
     <label class="f" id="prWrap" style="display:none"><span>Investment: counts as</span><select name="pr_class">${[['', 'Auto'], ['principal', 'Principal'], ['returns', 'Returns'], ['unexplained', 'Unexplained']].map(([v, l]) => `<option value="${v}" ${((t.pr_class === 'other' ? 'unexplained' : t.pr_class) || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">Only for investment accounts, e.g. mark a deposit as returns.</span></label>
     <label class="f" data-show="buy sell dividend invest_fee"><span>Ticker</span><input name="ticker" value="${esc(t.ticker || '')}" placeholder="AAPL, VTI, 600519.SS, BTC-USD"></label>
@@ -329,6 +330,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
     o.adj_reason = kind === 'adjustment' ? fd.get('adj_reason') : null;
     if (!o.adj_reason) delete o.adj_reason;
     if (['expense', 'income', 'refund'].includes(kind)) for (const k of ['tax_amount', 'tip_amount', 'tax_rate']) { const v = fd.get(k); o[k] = v === '' || v == null ? null : +v; }
+    if (kind === 'reimbursement') o.reimb_payer = fd.get('rb_from') || null;
     if (kind === 'expense') { o.reimbursable = form.reimbursable.checked; o.reimb_payer = fd.get('reimb_payer') || null; o.reimb_expected = fd.get('reimb_expected') || null; o.reimb_note = fd.get('reimb_note') || null; }
     if ($('#prWrap', bg).style.display === 'none') delete o.pr_class; else o.pr_class = fd.get('pr_class') || 'auto';
     if (isNew && opts.raw_text) o.raw_text = opts.raw_text;

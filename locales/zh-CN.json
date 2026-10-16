@@ -815,5 +815,9 @@
  "Select": "选择",
  "Status": "状态",
  "(no payer)": "（未填报销方）",
- "Close & write off": "结清（核销）"
+ "Close & write off": "结清（核销）",
+ "Paid back by (company / person)": "报销方（公司 / 个人）",
+ "Reimburse from (company / person)": "报销方（公司 / 个人）",
+ "(default = amount)": "（默认 = 金额）",
+ "not counted as an expense while open; link the reimbursements that pay it back after saving": "未结清时不计入支出；保存后可关联对应的报销款"
 }

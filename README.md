@@ -564,20 +564,33 @@ curl -s -H "$H" -X PUT "$B/api/accounts/7" -H 'Content-Type: application/json' -
 ## Reimbursements 报销
 
 - Flag any **expense** as *可报销 reimbursable* (quick/detail/edit forms, or the 报销中心 page). Optional: payer 报销方, expected amount (defaults to the expense amount), note.
-- Record money coming back as kind **`reimbursement` 报销到账**: it is an inflow to the chosen account (balances move normally) and is linked to one or more reimbursable expenses. Partial settlement is allowed; amounts are kept in each expense's own currency (multi-currency supported).
-- **Stats:** reimbursable expenses are excluded from home, dashboard, category reports and budgets; reimbursement receipts are not counted as income.
-- **Write off 核销:** gives up on the rest. The unreimbursed remainder counts as a normal expense again.
-- Deleting a receipt or an expense removes its links (DB trigger), so the expense goes back to pending.
-- Status: 待报销 pending / 部分报销 partial / 已报销 settled / written off.
+- Money coming back is a transaction of kind **`reimbursement` 报销**: an inflow to the chosen account (balances move normally). Enter it anywhere (form, quick add, import, API) or record it from the Reimbursement Center with the expenses already selected.
+- **Linking 关联 (many-to-many, partial amounts).** A reimbursement can pay back several expenses and an expense can be paid back by several reimbursements. Each link has an amount:
+  - it can't be more than the expense's **outstanding** amount nor the reimbursement's **unallocated** money (rejected with a message);
+  - the default is the smaller of the two ("Fill outstanding" in the UI);
+  - across currencies, the link stores both parts: the expense part (expense currency) and the reimbursement part (reimbursement currency).
+- Link from either side: Reimbursement Center → 🔗 Link on an expense, or 🔗 Link expenses on a reimbursement; or in the transaction dialog (links box). After saving a new reimbursement in the form, the link dialog opens with suggestions (best match first: same amount, date close to/after the expense, same payer). Links show with ✎ edit and ✕ unlink.
+- **Expense status:** reimbursed = sum of its links, outstanding = expected − reimbursed. **Open** (nothing reimbursed) → **Partial** → **Closed**. It closes by itself when outstanding reaches 0. **Close & write off** 核销 closes it by hand: the outstanding rest won't be reimbursed. **Reopen** undoes that. A reimbursement shows allocated / unallocated.
+- **Stats rule** (home, dashboard KPIs, reports, budgets, projects, transaction list totals):
+  - a reimbursement is never income (allocated or not);
+  - a reimbursable expense counts **0** while it is open or partial;
+  - once closed it counts **amount − reimbursed** (never below 0). So the reimbursed part never counts; only what was written off (or not expected back, when *expected* < amount) is a personal expense.
+- The Reimbursement Center filters by status (Open / Partial / Closed chips; Closed hidden by default). The transaction list shows status badges, and `GET /api/transactions?reimb=open|partial|closed|unallocated` filters on it.
+- Deleting a reimbursement or an expense removes its links (DB trigger, every delete path). Changing a reimbursement into another kind unlinks it; lowering its amount below what is linked, or moving a linked transaction to another currency, is refused.
 - Quick add (including Apple Watch / Shortcuts): start with `报销 …` or add `#报销`, `#reimb`, or `#报销:Payer`, e.g. `报销 打车 32 支付宝` or `hotel 389 chase #报销:Acme`.
 - The pre-existing *income* category "Reimbursement 报销" is unchanged. Old transactions in it stay income; use the new kind for new receipts.
+- Upgrade: the new `reimb_links.alloc_amount` column is additive; existing links are back-filled once, and the database is copied to the backups folder (`finance-…-before-migrate.db`) before the schema changes.
 
 API:
-- `GET /api/reimbursements?status=open|pending|partial|settled|written_off|all&from=&to=&payer=&account_id=` returns items plus outstanding totals by currency and by payer.
-- `POST /api/reimbursements/receipts` takes `{account_id, date, amount?, payer?, note?, links:[{expense_id, amount?}]}`.
-- `GET /api/reimbursements/receipts` and `GET /api/reimbursements/receipts/{id}`.
-- `POST /api/reimbursements/mark` takes `{ids, reimbursable, payer?, expected?, note?}`.
-- `POST /api/reimbursements/{id}/write-off` takes `{undo?}`.
+- `GET /api/reimbursements?status=open,partial (default)|closed|all&start=&end=&payer=&account_id=` returns items (with `reimb_state`, `reimb_settled`, `reimb_outstanding`, `reimb_counted`, links), counts per state, outstanding totals by currency / payer and unallocated totals. The older names `pending|settled|written_off` still work.
+- `POST /api/reimbursements/receipts` records a reimbursement already linked: `{account_id, date, amount?, payer?, note?, items:[{expense_id, amount?}]}`. Money received beyond the items stays unallocated.
+- `GET /api/reimbursements/receipts?unallocated=1` and `GET /api/reimbursements/receipts/{id}` include `reimb_allocated`, `reimb_unallocated` and `links`.
+- `GET /api/reimbursements/links?expense_id=&reimbursement_id=` lists links.
+- `POST /api/reimbursements/links` links (all or nothing). It takes `{expense_id, reimbursement_id, amount?, alloc_amount?}` or `{reimbursement_id, items:[{expense_id, amount?}]}` or `{expense_id, items:[{reimbursement_id, amount?}]}`.
+- `PUT /api/reimbursements/links/{id}` takes `{amount?, alloc_amount?}`; `DELETE /api/reimbursements/links/{id}` unlinks.
+- `GET /api/reimbursements/suggest?reimbursement_id=` (open expenses) or `?expense_id=` (reimbursements with unallocated money): best match first, with `default_amount`.
+- `POST /api/reimbursements/{id}/close` / `.../reopen` (or `.../write-off` with `{undo?}`), and `POST /api/reimbursements/mark` with `{ids, reimbursable, payer?}`.
+- CSV export adds `reimbursable, reimb_state, reimb_reimbursed, reimb_outstanding, reimb_counted, reimb_unallocated, reimb_links` (`#<other id>=<amount>; …`). The agent endpoint accepts `kind: "reimbursement"` with `payer` and `expense_ids` to link right away.
 
 ## Email rules: Balance adjust 调整余额 (statement balance)
 - A parsing rule with **Kind = Balance adjust** (`kind: "balance"`) treats the extracted amount as the account's **new balance** (statement value), not a transaction amount.
@@ -775,7 +788,7 @@ One forgiving endpoint for AI agents, scripts and Shortcuts (`X-API-Key` header)
 |---|---|
 | `account` | id, name, alias, or last 4 digits (`"4321"`). Omit to use the default account. `last4` also works. |
 | `amount` | Charged total (a negative number is treated as spending). Optional when a readable receipt is attached. |
-| `kind` | `expense` (default), `income`, `refund`, `transfer` (+ `to_account`). |
+| `kind` | `expense` (default), `income`, `refund`, `transfer` (+ `to_account`), `reimbursement` (+ optional `payer`, `expense_ids` to link). |
 | `date` | `2026-10-05` or `2026-10-05 12:30`; default now (or the receipt date). |
 | `currency` | e.g. `CNY` when it differs from the account currency (converted like the form). |
 | `merchant`, `note`, `tags` | Free text. |
