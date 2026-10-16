@@ -476,3 +476,75 @@ def auto_run_due(db: Database, now: datetime | None = None) -> bool:
     if (now.hour, now.minute) < (int(hh), int(mm)):
         return False
     return db.get_setting("schedule_last_auto_run") != now.date().isoformat()
+
+
+# ---------------------------------------------------------------- rest of the month (home KPI cards)
+def month_remaining(db: Database, month: str | None = None, ledger_id: int | None = None,
+                    today: date | None = None) -> dict:
+    """Scheduled income / expense still to come in `month` (YYYY-MM), in the base currency.
+
+    Counts every occurrence of an ENABLED schedule whose transaction kind is 'expense' or 'income' (transfers and every
+    other kind are excluded) dated from max(today, 1st of the month) through the month's last day, that is not
+    generated yet (no schedule_occurrences row; that also skips the dates before a resumed schedule's skip_before) and
+    is within the schedule's start/end date and max count. 'Remind only' schedules count too (bills you will pay), unless
+    that date's reminder was already marked paid / done / dismissed. Variable-amount schedules count their suggested amount;
+    without one they are listed but add 0. Same stats rules as the KPIs: a reimbursable expense counts 0 and a
+    reimbursement (its own kind) is never income. Past months have nothing remaining."""
+    today = today or local_today(db)
+    month = month or today.strftime("%Y-%m")
+    y, m = map(int, month.split("-"))
+    first = date(y, m, 1)
+    last = _day_in_month(y, m, 31)
+    lo = max(today, first)
+    base = db.get_setting("base_currency", "USD")
+    out = {"month": f"{y}-{m:02d}", "from": lo.isoformat(), "to": last.isoformat(), "currency": base,
+           "income": 0.0, "expense": 0.0, "net": 0.0, "income_count": 0, "expense_count": 0, "count": 0,
+           "unknown_amount_count": 0, "items": []}
+    if lo > last:
+        return out
+    rates = ledger.fx_rates(db)
+    accts = {a["id"]: a for a in db.all("SELECT id, name, currency FROM accounts")}
+    default_ledger = int(db.get_setting("default_ledger_id", "1") or 1)
+    for s in db.all("SELECT * FROM schedules WHERE enabled=1 ORDER BY id"):
+        try:
+            tpl = json.loads(s["template"] or "{}")
+        except ValueError:
+            continue
+        kind = tpl.get("kind") or "expense"
+        if kind not in ("expense", "income"):
+            continue
+        if ledger_id and int(tpl.get("ledger_id") or default_ledger) != int(ledger_id):
+            continue
+        sb = _d(s["skip_before"])
+        done = {r["occurrence_date"] for r in db.all("SELECT occurrence_date FROM schedule_occurrences WHERE schedule_id=?", (s["id"],))}
+        remind = s["post_mode"] == "remind"
+        open_rem = set()
+        if remind:  # reminder created ahead of time but not paid yet: the bill is still to come
+            open_rem = {r["occurrence_date"] for r in db.all(
+                "SELECT occurrence_date FROM reminders WHERE kind='schedule' AND schedule_id=? AND status='open'", (s["id"],))}
+        acct = accts.get(int(tpl["account_id"])) if str(tpl.get("account_id") or "").isdigit() else None
+        cur = tpl.get("currency") or (acct or {}).get("currency") or base
+        for d in iter_occurrences(s, last):
+            ds = d.isoformat()
+            if d < lo or (sb and d < sb):
+                continue
+            if ds in done and not (remind and ds in open_rem):
+                continue
+            amt = tpl.get("amount")
+            known = amt not in (None, "")
+            v = float(amt) if known else 0.0
+            if kind == "expense" and tpl.get("reimbursable"):
+                v = 0.0  # stats rule: reimbursable expenses count 0 while open
+            vb = round(ledger.convert(v, cur, base, rates), 2)
+            out[kind] += vb
+            out[f"{kind}_count"] += 1
+            out["unknown_amount_count"] += 0 if known else 1
+            out["items"].append({"date": f"{ds} {s['time_of_day']}", "schedule_id": s["id"], "name": s["name"], "kind": kind,
+                                 "amount": v if known else None, "currency": cur, "amount_base": vb if known else None,
+                                 "post_mode": s["post_mode"], "variable_amount": bool(s["variable_amount"]),
+                                 "account_name": (acct or {}).get("name")})
+    out["items"].sort(key=lambda x: (x["date"], x["schedule_id"]))
+    out["income"], out["expense"] = round(out["income"], 2), round(out["expense"], 2)
+    out["net"] = round(out["income"] - out["expense"], 2)
+    out["count"] = out["income_count"] + out["expense_count"]
+    return out

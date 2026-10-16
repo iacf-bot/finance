@@ -250,3 +250,13 @@ table.upcoming td{padding:5px 6px}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
 .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 tr.over-row td{background:rgba(232,85,62,.07)}
+/* home KPI: scheduled remaining this month + projected month-end */
+.home-cards .card.stat{position:relative;overflow:visible}
+.sched-rem{margin-top:6px;padding-top:5px;border-top:1px dashed #e3e7ee;cursor:pointer;position:relative;outline:none}
+.sched-rem:hover > .small:first-child,.sched-rem:focus > .small:first-child{text-decoration:underline dotted}
+.sr-pop{display:none;position:absolute;left:0;top:100%;z-index:30;min-width:280px;max-width:360px;max-height:320px;overflow:auto;
+  background:#fff;border:1px solid #dfe3ea;border-radius:10px;box-shadow:0 8px 24px rgba(20,30,50,.14);padding:8px 10px;text-align:left;cursor:default}
+@media (hover:hover){.sched-rem:hover .sr-pop{display:block}}
+.sched-rem.open .sr-pop{display:block}
+.sr-pop table.t td{padding:3px 6px}
+@media (max-width:700px){.sr-pop{position:static;max-width:none;min-width:0;box-shadow:none;margin-top:6px}}

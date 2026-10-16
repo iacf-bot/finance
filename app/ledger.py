@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import defaultdict
 from datetime import datetime, date, timedelta
@@ -9,6 +10,7 @@ from typing import Any
 
 from .db import ACCOUNT_TYPES, ADJ_REASONS, Database, now_iso
 
+log = logging.getLogger(__name__)
 KINDS = ["expense", "income", "transfer", "refund", "adjustment", "buy", "sell", "dividend", "invest_fee", "reimbursement"]
 INVEST_KINDS = {"buy", "sell", "dividend", "invest_fee"}
 
@@ -878,9 +880,27 @@ def month_summary(db: Database, month: str | None = None, ledger_id: int | None 
         cond += " AND ledger_id=?"; params.append(ledger_id)
     n = db.one(f"SELECT COUNT(*) n FROM transactions WHERE {cond}", params)["n"]
     last_day = (date(ny, nm, 1) - timedelta(days=1)).isoformat()
+    sched = scheduled_remaining(db, f"{y}-{m:02d}", ledger_id)
     return {"month": f"{y}-{m:02d}", "start": s, "end": last_day, "prev": f"{py}-{pm:02d}", "next": f"{ny}-{nm:02d}",
             "income": t["income"], "expense": t["expense"], "net": t["net"], "investment_income": t["investment_income"],
-            "currency": t["currency"], "count": n}
+            "currency": t["currency"], "count": n,
+            # scheduled income/expense still to come this month + projected month-end = actual so far + scheduled
+            "scheduled": sched, "projected": _projected(t, sched)}
+
+
+def scheduled_remaining(db: Database, month: str, ledger_id: int | None = None) -> dict | None:
+    from .schedules import month_remaining
+    try:
+        return month_remaining(db, month, ledger_id)
+    except Exception:  # noqa: BLE001 - the KPI cards must render even if a schedule is broken
+        log.exception("scheduled remaining failed")
+        return None
+
+
+def _projected(t: dict, sched: dict | None) -> dict:
+    si, se = (sched or {}).get("income", 0.0), (sched or {}).get("expense", 0.0)
+    inc, exp = round(t["income"] + si, 2), round(t["expense"] + se, 2)
+    return {"income": inc, "expense": exp, "net": round(inc - exp, 2)}
 
 
 # ---------------------------------------------------------------- reports
@@ -1049,6 +1069,7 @@ def dashboard(db: Database, month: str | None = None, ledger_id: int | None = No
     return {
         "month": month,
         "totals": totals(db, s, e, ledger_id),
+        "scheduled_remaining": scheduled_remaining(db, month, ledger_id),
         "investment_income": investment_income(db, s, e, ledger_id),
         "upcoming": _upcoming(db),
         "by_category": breakdown(db, s, e, "category", "expense", ledger_id),
