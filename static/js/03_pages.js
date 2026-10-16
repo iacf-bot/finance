@@ -9,11 +9,20 @@ function acctRow(a) {
       <div class="nm"><b>${isDemoName(a.name) ? '<span class="pill demo">DEMO</span> ' : ''}${esc(a.name)} ${a.last4 ? `<span class="muted small">••${esc(a.last4)}</span>` : ''}</b>
       <span class="small muted">${esc(a.type_label)} · ${a.currency}${a.aliases ? ' · aliases: ' + esc(a.aliases) : ''}${a.archived ? ' · archived' : ''}</span>
       ${a.reconciled_at ? `<div class="small"><a class="rec-link" href="javascript:void 0" data-rhist="${a.id}" title="Reconciliation history">✔ Reconciled ${esc(a.reconciled_at.slice(0, 10))}${a.reconciliation_count > 1 ? ` · ${a.reconciliation_count}×` : ''}</a></div>` : ''}
+      ${a.type === 'credit_card' && a.card_expiry ? `<div class="small">${cardExpiryPill(a)}</div>` : ''}
       ${a.type === 'credit_card' && a.credit_limit ? `<div class="small muted">Owed ${money(a.owed, a.currency)} · Limit ${money(a.credit_limit, a.currency)} · Available ${money(a.available_credit, a.currency)}</div><div class="bar" style="max-width:260px"><i class="${a.owed / a.credit_limit > .8 ? 'over' : a.owed / a.credit_limit > .5 ? 'warn' : ''}" style="width:${Math.max(0, Math.min(100, a.owed / a.credit_limit * 100))}%"></i></div>` : ''}
       ${a.is_investment ? `<div class="small muted">Cash ${money(a.cash_balance, a.currency)} · Holdings ${money(a.holdings_value, a.currency)}</div>` : ''}
       </div>
       <div class="bal ${a.is_liability ? (a.owed > 0 ? 'neg' : zero ? '' : 'pos') : a.balance < 0 ? 'neg' : ''}">${a.is_liability ? `<span class="small muted">${a.owed >= 0 ? 'owed' : 'credit'} </span>${money(Math.abs(a.owed), a.currency)}` : money(a.balance, a.currency)}${a.currency !== S.meta.settings.base_currency ? `<div class="small muted">${money(a.balance_base)}</div>` : ''}</div>
       <div class="row acts" style="flex-wrap:nowrap"><a class="btn sm" href="#/account/${a.id}" title="Account history">📜 <span class="hide-m">History</span></a><button class="btn sm" data-adj="${a.id}" title="Enter the real balance; an adjustment transaction records the difference">⚖️ <span class="hide-m">Set balance</span></button><button class="btn sm" data-rec="${a.id}" title="Compare with a statement and lock the balance at that date">✔ <span class="hide-m">Reconcile</span></button><button class="btn sm" data-edit="${a.id}">Edit</button></div></div>`;
+}
+/* credit card expiry: "Expires 08/2029", amber inside the reminder window, red once expired */
+function cardExpiryPill(a) {
+  if (!a || !a.card_expiry) return '';
+  const y = +a.card_expiry.slice(0, 4), m = +a.card_expiry.slice(5, 7), end = new Date(y, m, 0), now = new Date(); now.setHours(0, 0, 0, 0);
+  const days = Math.round((end - now) / 864e5), lead = +(S.meta.settings.card_expiry_lead_days || 60), lbl = a.card_expiry.slice(5, 7) + '/' + y;
+  const cls = days < 0 ? 'cx-bad' : days <= lead ? 'warn' : '';
+  return `<span class="pill ${cls}" title="${esc(t('Valid through the end of that month'))}">💳 ${esc(days < 0 ? t('Expired {date}', {date: lbl}) : t('Expires {date}', {date: lbl}))}</span>`;
 }
 /* principal / returns summary line (used by the Investments page; the Accounts tree no longer shows it) */
 function pctTxt(p) { return p === null || p === undefined ? '' : ` (${p >= 0 ? '+' : ''}${p.toFixed(1)}%)`; }
@@ -95,6 +104,7 @@ function acctForm(a) {
    <label class="f" data-cc><span>…or due N days after statement 账单后N天</span><input name="due_after_days" type="number" min="1" max="60" value="${a.due_after_days ?? ''}"></label>
    <label class="f" data-cc><span>Remind days before due</span><input name="remind_days" type="number" min="0" max="60" value="${a.remind_days ?? ''}" placeholder="default (Settings, 10)"></label>
    <label class="f" data-cc><span>Minimum payment %</span><input name="min_pay_pct" type="number" step="0.1" value="${a.min_pay_pct ?? ''}"></label>
+   <label class="f" data-cc><span>Card expires (MM/YY)</span><input name="card_expiry" placeholder="MM/YY" maxlength="7" inputmode="numeric" value="${a.card_expiry ? esc(a.card_expiry.slice(5, 7) + '/' + a.card_expiry.slice(2, 4)) : ''}"><span class="small muted">Valid through the end of that month. You'll be reminded to move autopayments to the new card before it expires.</span></label>
    <label class="f" data-cc><span>Autopay</span><span><input type="checkbox" name="autopay" ${a.autopay ? 'checked' : ''}> on</span></label>
    <label class="f"><span>Institution</span><input name="institution" value="${esc(a.institution || '')}"></label>
    <label class="f"><span>Last 4 digits (matches email alerts)</span><input name="last4" maxlength="5" value="${esc(a.last4 || '')}"></label>
@@ -104,13 +114,13 @@ function acctForm(a) {
    <label class="chk"><input type="checkbox" name="is_default" ${S.meta.settings.default_account_id == a.id && a.id ? 'checked' : ''}> Default account for quick-add</label>
   </form>`, {buttons: `${isNew ? '' : '<button class="btn danger" data-del>Delete</button><span class="sp"></span>'}<button class="btn" data-x2>Cancel</button><button class="btn pri" data-ok>Save</button>`});
   const f = $('#af', bg);
-  const upd = () => { const l = liab(f.type.value); if ($('#obLbl', bg)) $('#obLbl', bg).textContent = l ? 'Amount owed at start' : 'Opening balance'; $('[data-cc]', bg).style.display = f.type.value === 'credit_card' ? '' : 'none'; $('[data-inv]', bg).style.display = isInvType(f.type.value) ? '' : 'none'; };
+  const upd = () => { const l = liab(f.type.value); if ($('#obLbl', bg)) $('#obLbl', bg).textContent = l ? 'Amount owed at start' : 'Opening balance'; $$('[data-cc]', bg).forEach(x => x.style.display = f.type.value === 'credit_card' ? '' : 'none'); $('[data-inv]', bg).style.display = isInvType(f.type.value) ? '' : 'none'; };
   f.type.onchange = upd; upd();
   if (f.balance) f.balance.oninput = () => { $('#brWrap', bg).style.display = f.balance.value !== '' && +f.balance.value !== +f.balance.dataset.orig ? '' : 'none'; };
   $('[data-x2]', bg).onclick = bg.close;
   $('[data-ok]', bg).onclick = async () => {
     const o = Object.fromEntries(new FormData(f)); o.archived = f.archived && f.archived.checked ? 1 : 0;
-    if (o.type === 'credit_card') o.autopay = f.autopay.checked ? 1 : 0; else ['stmt_day', 'due_day', 'due_after_days', 'remind_days', 'min_pay_pct', 'autopay'].forEach(k => delete o[k]);
+    if (o.type === 'credit_card') o.autopay = f.autopay.checked ? 1 : 0; else ['stmt_day', 'due_day', 'due_after_days', 'remind_days', 'min_pay_pct', 'autopay', 'card_expiry'].forEach(k => delete o[k]);
     const isDef = f.is_default.checked; delete o.is_default;
     if (isNew) o.opening_balance = (+o.opening_balance || 0) * (liab(o.type) ? -1 : 1);
     else { delete o.opening_balance; const bi = f.balance; if (bi.value === '' || +bi.value === +bi.dataset.orig) { delete o.balance; delete o.balance_reason; } else o.balance = +bi.value; }
