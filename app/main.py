@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import backup as bk
-from . import agent_api, config, demo, email_reports, mailer, offsite, importers, ingest, ledger, plan_lines, taxtips, principal, projects, quotes, receipts, reimburse, reminders, reconcile, returns, schedules
+from . import agent_api, config, demo, email_reports, mailer, offsite, importers, ingest, ledger, plan_lines, taxtips, principal, projects, quotes, receipts, reimburse, reminders, reconcile, reserves, returns, schedules
 from .db import ACCOUNT_TYPES, BASE_DIR, Database, now_iso
 from .email_rules import parse_email
 
@@ -173,11 +173,13 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     SETTING_KEYS = ["base_currency", "review_threshold", "default_account_id", "default_ledger_id",
                     "backup_interval_hours", "backup_keep", "schedule_run_time", "schedule_catchup_days", "timezone",
                     "lock_reconciled", "receipts_dir", "receipts_pattern",
-                    "reminder_lead_days", "reminder_notify", "backup_dir", "backup_receipts", "card_expiry_lead_days"]
+                    "reminder_lead_days", "reminder_notify", "backup_dir", "backup_receipts", "card_expiry_lead_days",
+                    "reserve_release_days", "reserve_hold_days"]
     SETTING_DEFAULTS = {"schedule_run_time": "00:15", "schedule_catchup_days": "90", "timezone": schedules.DEFAULT_TZ, "lock_reconciled": "0",
                         "receipts_dir": "", "receipts_pattern": "{yyyy}/{mm}/{dd}",
                         "reminder_lead_days": "10", "reminder_notify": "off", "backup_dir": "", "backup_receipts": "1",
-                        "card_expiry_lead_days": str(reminders.EXPIRY_LEAD_DEFAULT)}
+                        "card_expiry_lead_days": str(reminders.EXPIRY_LEAD_DEFAULT),
+                        "reserve_release_days": str(reserves.RELEASE_DAYS_DEFAULT), "reserve_hold_days": str(reserves.HOLD_DAYS_DEFAULT)}
 
     @app.get("/api/meta")
     def meta():
@@ -191,13 +193,14 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             "merchants": db.all("SELECT * FROM merchants ORDER BY name"),
             "projects": db.all("SELECT * FROM projects ORDER BY archived, name"),
             "plan_lines": db.all("SELECT id, project_id, name, sort FROM project_plan_lines ORDER BY project_id, sort, id"),
-            "accounts": db.all("""SELECT id, name, type, currency, archived, aliases, last4,
+            "accounts": db.all("""SELECT id, name, type, currency, archived, aliases, last4, system_role,
                 (SELECT MAX(as_of) FROM reconciliations r WHERE r.account_id=accounts.id) reconciled_at
                 FROM accounts ORDER BY archived, sort, name"""),
             "currencies": db.all("SELECT * FROM fx_rates ORDER BY currency"),
             "settings": {k: db.get_setting(k, SETTING_DEFAULTS.get(k)) for k in SETTING_KEYS},
             "review_count": db.one("SELECT COUNT(*) n FROM transactions WHERE status='review'")["n"],
             "reminder_count": reminders.badge(db),
+            "reserve_review_count": reserves.review_count(db),
             "has_demo": bool(db.one("SELECT 1 x FROM accounts WHERE is_demo=1 LIMIT 1")),
             "prefs": ledger.get_prefs(db),
             "adj_reasons": [{"code": c, "name": en, "name_zh": zh} for c, en, zh in ledger.ADJ_REASONS],
@@ -256,6 +259,11 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
                 if k == "card_expiry_lead_days":
                     if not str(v).strip().isdigit() or not 0 <= int(str(v).strip()) <= 365:
                         raise HTTPException(400, "Card expiry reminder days must be 0–365")
+                    v = str(int(str(v).strip()))
+                if k in ("reserve_release_days", "reserve_hold_days"):
+                    if not str(v).strip().isdigit() or not 0 <= int(str(v).strip()) <= 365:
+                        raise HTTPException(400, ("Reserve reminder days after check-out" if k == "reserve_release_days"
+                                                  else "Reserve reminder days after check-in") + " must be 0–365")
                     v = str(int(str(v).strip()))
                 if k == "backup_receipts":
                     v = "0" if str(v).lower() in ("0", "false", "off", "no", "") else "1"
@@ -651,6 +659,92 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
             return reimburse.write_off(db, tid, undo=True)
         except ledger.ValidationError as e:
             raise HTTPException(400, str(e))
+
+    # ------------------------------------------------------------ reserves 押金/预授权
+    @app.exception_handler(reserves.NotFound)
+    async def _res_nf(_req, exc):
+        return JSONResponse({"detail": "Reserve not found"}, status_code=404)
+
+    @app.get("/api/reserves")
+    def reserve_list(request: Request):
+        """Reserves (card holds / refundable deposits): ?state=open,partial (default) | settled | released | cancelled |
+        all, method=hold|deposit, account_id, project_id, review=1. Also totals on_hold / deposits (by currency)."""
+        return reserves.list_reserves(db, dict(request.query_params))
+
+    @app.post("/api/reserves")
+    def reserve_create(body: dict = Body(...)):
+        """{method: hold|deposit, account_id, amount, currency?, merchant?, title?, start_date (check-in), end_date
+        (check-out)?, category_id?, project_id?, member_id?, ref?, note?, remind?, paid_amount?, deposit_tx_id?}.
+        A hold is memo only; a deposit also posts the transfer account → Deposits 押金."""
+        body = dict(body or {}); body.pop("is_demo", None)
+        return reserves.create(db, body)
+
+    @app.get("/api/reserves/export.csv")
+    def reserve_export():
+        import csv, io
+        rows = reserves.export_rows(db)
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=["id", "method", "title", "merchant", "account", "amount", "currency", "check_in",
+                                            "check_out", "state", "outstanding", "links"])
+        w.writeheader(); w.writerows(rows)
+        return Response(buf.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="reserves-{date.today()}.csv"'})
+
+    @app.get("/api/reserves/suggest")
+    def reserve_suggest(reserve_id: int | None = None, transaction_id: int | None = None, limit: int = 50):
+        """Candidates to link: ?reserve_id= (transactions) or ?transaction_id= (open reserves)."""
+        return reserves.suggest(db, reserve_id, transaction_id, limit)
+
+    @app.get("/api/reserves/{rid}")
+    def reserve_get(rid: int):
+        return reserves.get(db, rid)
+
+    @app.put("/api/reserves/{rid}")
+    def reserve_update(rid: int, body: dict = Body(...)):
+        return reserves.update(db, rid, body or {})
+
+    @app.delete("/api/reserves/{rid}")
+    def reserve_delete(rid: int, unlink: bool = False):
+        """Refused while transactions are linked unless ?unlink=1 (links removed, transactions kept)."""
+        return reserves.delete(db, rid, unlink)
+
+    @app.post("/api/reserves/{rid}/links")
+    def reserve_link(rid: int, body: dict = Body(...)):
+        """{transaction_id, role?, amount?, alloc_amount?, final?} or {items: [...]} (all or nothing)."""
+        return reserves.link(db, rid, body or {})
+
+    @app.delete("/api/reserves/links/{lid}")
+    def reserve_unlink(lid: int):
+        return reserves.unlink(db, lid)
+
+    @app.post("/api/reserves/{rid}/settle")
+    def reserve_settle(rid: int, body: dict = Body(...)):
+        """Check-out in one step (dry_run: true previews). Hold: {final: {amount | transaction_id}} or {release: true};
+        deposit: {refund: {account_id, amount?, received?}, apply: {amount}, forfeit: {amount}, charge: {amount}}."""
+        return reserves.settle(db, rid, body or {})
+
+    for _how in ("release", "close", "cancel", "reopen"):
+        def _mk(how):
+            def _act(rid: int):
+                return reserves.close(db, rid, how)
+            _act.__name__ = f"reserve_{how}"
+            return _act
+        app.post(f"/api/reserves/{{rid}}/{_how}", name=f"reserve_{_how}")(_mk(_how))
+
+    @app.post("/api/reserves/{rid}/confirm")
+    def reserve_confirm(rid: int):
+        """A hold detected from an email is right: it leaves the review queue."""
+        return reserves.confirm(db, rid)
+
+    @app.post("/api/reserves/{rid}/to-transaction")
+    def reserve_to_tx(rid: int):
+        """'It's a real charge': the detected hold becomes an expense in the review queue."""
+        return reserves.to_transaction(db, rid)
+
+    @app.post("/api/review/{tid}/to-reserve")
+    def review_to_reserve(tid: int, body: dict = Body(default={})):
+        """Convert a To-review item into a reserve ({method: hold|deposit, end_date?, …})."""
+        return reserves.from_review(db, tid, body or {})
 
     @app.get("/api/transactions/export.csv")
     def export_tx(request: Request):
@@ -1091,7 +1185,8 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     @app.get("/api/review")
     def review_items():
         rows, total = ledger.query_tx(db, {"status": "review", "limit": 500})
-        return {"items": rows, "total": total}
+        holds = reserves.list_reserves(db, {"review": "1", "state": "all"})["items"]
+        return {"items": rows, "total": total, "holds": holds}
 
     # ------------------------------------------------------------ categories & simple lists
     @app.get("/api/categories")

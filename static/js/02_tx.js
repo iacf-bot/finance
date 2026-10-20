@@ -58,7 +58,8 @@ function txDesc(t) {
   const tags = (t.tags || '').split(',').filter(Boolean).map(x => `<span class="pill">#${esc(x)}</span>`).join(' ');
   const demo = isDemoName(t.account_name) || /^\[DEMO\]/.test(t.note || '') ? '<span class="pill demo">DEMO</span> ' : '';
   const rb = t.kind === 'expense' && t.reimbursable ? txReimbPill(t) : t.kind === 'reimbursement' ? txReimbPill(t) : '';
-  return `<div>${demo}${rb}<b>${main}</b> ${tags}</div><div class="small muted">${t.kind !== 'transfer' ? esc(t.account_name || '— no account —') + ' · ' : ''}${bits.join(' · ')}${t.note ? ' · ' + esc(t.note.slice(0, 80)) : ''}${t.attachment ? ' · 📎' : ''}</div>`;
+  const rs = t.reserves && t.reserves.length && typeof txReservePill === 'function' ? txReservePill(t) : '';
+  return `<div>${demo}${rb}${rs}<b>${main}</b> ${tags}</div><div class="small muted">${t.kind !== 'transfer' ? esc(t.account_name || '— no account —') + ' · ' : ''}${bits.join(' · ')}${t.note ? ' · ' + esc(t.note.slice(0, 80)) : ''}${t.attachment ? ' · 📎' : ''}</div>`;
 }
 /* reimbursement status badge in transaction lists: expense open / partial / closed, reimbursement unallocated money */
 function txReimbPill(x) {
@@ -168,7 +169,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
   if (isReview) { if (!t.amount) unsure.add('amount'); if (!t.account_id) unsure.add('account_id'); if (['expense', 'income', 'refund'].includes(t.kind) && !t.category_id) unsure.add('category_id'); if (t.kind === 'transfer' && !t.to_account_id) unsure.add('to_account_id'); }
   if (unsure.has('account_id')) unsure.add('from_account_id');
   const U = name => unsure.has(name) ? ' unsure' : '';
-  const html = `<div class="kind-tabs${U('kind')}">${['expense', 'income', 'transfer', 'refund', 'reimbursement', 'adjustment', 'buy', 'sell', 'dividend', 'invest_fee'].map(k => `<button type="button" data-k="${k}" class="${t.kind === k ? 'on' : ''}">${kindLabel[k]}</button>`).join('')}</div>
+  const html = `<div class="kind-tabs${U('kind')}">${['expense', 'income', 'transfer', 'refund', 'reimbursement', 'adjustment', 'buy', 'sell', 'dividend', 'invest_fee'].map(k => `<button type="button" data-k="${k}" class="${t.kind === k ? 'on' : ''}">${kindLabel[k]}</button>`).join('')}${(isNew || isReview) && !SCH ? `<button type="button" data-rsv class="rs-tab" title="${isReview ? 'Convert this item into a card hold or deposit' : 'Hotel / rental deposit or card hold'}">🔒 Reserve</button>` : ''}</div>
   ${isReview ? `<div class="demo-banner" style="background:#fff8e6;border-color:#e4a11b;color:#7a5200">📥 Review item from <b>${esc(t.source)}</b> ${confPill(t.confidence)} — check the fields${unsure.size ? ' (highlighted ones especially)' : ''} and press <b>Approve</b>.${t.raw_text ? `<div class="small mono" style="white-space:pre-wrap;max-height:120px;overflow:auto;margin-top:4px">${esc(t.raw_text.slice(0, 1500))}</div>` : ''}</div>` : ''}
   ${opts.banner ? `<div class="demo-banner prefill-banner"><div>✎ ${opts.banner}${unsure.size ? ' <b>Highlighted fields</b> are guesses — please check them.' : ''}</div></div>` : ''}
   <form id="txForm" class="form" autocomplete="off">
@@ -197,6 +198,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
         <label class="f"><span>Expected amount <small class="muted">(default = amount)</small></span><input name="reimb_expected" type="number" step="0.01" inputmode="decimal" value="${t.reimb_expected ?? ''}"></label>
         <label class="f full"><span>Reimbursement note</span><input name="reimb_note" value="${esc(t.reimb_note || '')}"></label></div></div>
     <label class="f" data-show="reimbursement"><span>Paid back by (company / person)</span><input name="rb_from" list="dlPayer" value="${esc(t.kind === 'reimbursement' ? t.reimb_payer || '' : '')}"></label>
+    ${id && !isReview ? '<div class="full rb-linkbox" id="rsTxBox" hidden></div>' : ''}
     ${id ? '<div class="full rb-linkbox" id="rbLinkBox" hidden></div>' : '<div class="full small muted" data-show="reimbursement">💡 A reimbursement is not income. After saving, link it to the reimbursable expenses it pays back (you can also do that later here or in Reimbursements).</div>'}
     <label class="f" id="prWrap" style="display:none"><span>Investment: counts as</span><select name="pr_class">${[['', 'Auto'], ['principal', 'Principal'], ['returns', 'Returns'], ['unexplained', 'Unexplained']].map(([v, l]) => `<option value="${v}" ${((t.pr_class === 'other' ? 'unexplained' : t.pr_class) || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">Only for investment accounts, e.g. mark a deposit as returns.</span></label>
     <label class="f" data-show="buy sell dividend invest_fee"><span>Ticker</span><input name="ticker" value="${esc(t.ticker || '')}" placeholder="AAPL, VTI, 600519.SS, BTC-USD"></label>
@@ -300,6 +302,16 @@ async function openTx(id, after, preset = {}, opts = {}) {
   if (!document.getElementById('dlPayer')) document.body.insertAdjacentHTML('beforeend', '<datalist id="dlPayer"></datalist>');
   api('/api/reimbursements?status=all').then(d => { $('#dlPayer').innerHTML = d.payers.map(p => `<option value="${esc(p)}">`).join(''); }).catch(() => {});
   sync();
+  const rsBtn = $('[data-rsv]', bg);
+  if (rsBtn) rsBtn.onclick = () => {
+    const a = +(form.account_id.value || form.from_account_id.value) || null;
+    const preset = {account_id: a, amount: form.amount.value || '', currency: form.currency.value, merchant: form.merchant.value, note: form.note.value,
+      start_date: (form.date.value || '').slice(0, 10) || today(), category_id: kind === 'expense' ? (+form.category_id.value || null) : null,
+      project_id: +form.project_id.value || null};
+    bg.close(); reserveForm({preset, fromReview: isReview ? id : null, after: async () => { await loadMeta(); if (after) after(); else route(); }});
+  };
+  const rsBox = $('#rsTxBox', bg);
+  if (rsBox && typeof rsTxBox === 'function') rsTxBox(rsBox, id, () => { bg.close(); after ? after() : route(); }).catch(() => {});
   const lbox = $('#rbLinkBox', bg);
   if (lbox && (t.kind === 'reimbursement' || (t.kind === 'expense' && t.reimbursable))) rbLinkBox(lbox, id, () => { after ? after() : route(); }).catch(() => {});
   /* receipt photos: new tx = fill the form from OCR and attach on save; existing tx = attach right away */

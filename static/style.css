@@ -268,3 +268,28 @@ select.cx-mv{width:auto;display:inline-block;padding:2px 6px;font-size:12.5px;ma
 .sched-rem.open .sr-pop{display:block}
 .sr-pop table.t td{padding:3px 6px}
 @media (max-width:700px){.sr-pop{position:static;max-width:none;min-width:0;box-shadow:none;margin-top:6px}}
+/* Reserves 押金/预授权 */
+.rs-st{display:inline-block;font-size:11px;padding:2px 6px;border-radius:6px;white-space:nowrap}
+.rs-open{background:#e8f0fc;color:#2a5fb0}.rs-partial{background:#fff3dc;color:#9a6200}.rs-settled{background:#e3f6ee;color:#0f8a5f}
+.rs-released{background:#eef3f0;color:#3d7a5d}.rs-cancelled{background:#eee;color:#666}
+td.rs-open,div.rs-open{background:none;color:inherit}
+.pill.rs-m{background:#eef0fb;color:#4a4fa8;text-decoration:none}.pill.rs-m-deposit{background:#fff4e5;color:#9a5a00}
+.rs-hold{color:#4a4fa8;text-decoration:none}.rs-hold:hover{text-decoration:underline}
+.rs-review{margin:12px 0;padding:10px 12px;border:1px dashed #e4a11b;border-radius:10px;background:#fffaf0}.rs-review h3{margin:0 0 6px}
+.rs-rv-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0;border-top:1px solid #f1e6cc}.rs-rv-row:first-of-type{border-top:0}
+.rs-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.rs-amts{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;background:#f7f8fa;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-variant-numeric:tabular-nums}
+.rs-tl{list-style:none;margin:0 0 10px;padding:0 0 0 14px;border-left:2px solid var(--line)}
+.rs-tl li{position:relative;display:flex;gap:10px;align-items:baseline;padding:6px 0 6px 6px;flex-wrap:wrap}
+.rs-tl li::before{content:'';position:absolute;left:-21px;top:12px;width:10px;height:10px;border-radius:50%;background:#fff;border:2px solid #9aa4b8}
+.rs-tl li.rs-tl-l::before{border-color:var(--blue)}.rs-tl li.rs-tl-due::before{border-color:var(--amber)}.rs-tl li.rs-tl-closed::before{border-color:var(--green);background:var(--green)}
+.rs-tl-d{min-width:84px;font-variant-numeric:tabular-nums}
+.rs-tl .lnk{border:0;background:none;cursor:pointer;padding:0 3px;font-size:12px;color:#5b6b7a}.rs-tl .lnk.danger:hover{color:#c23b2c}
+.rs-co-box{border:1px solid var(--line);border-radius:10px;padding:6px 10px 10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+.rs-co-box legend{font-size:13px;font-weight:600;padding:0 4px}
+.rs-co-mode{display:flex;gap:6px;flex-wrap:wrap}.rs-co-mode .chip{cursor:pointer}
+.rs-prev{margin-top:12px;padding:10px 12px;background:#f7f8fa;border-radius:10px;min-height:40px}.rs-prev h3{margin:0 0 6px}
+.rs-plan{margin:0 0 6px;padding-left:18px}
+.rs-set{margin-top:12px}.rs-set input{width:64px;display:inline-block}
+.kind-tabs .rs-tab{border-left:1px dashed var(--line)}
+.rs-pick{width:auto;display:inline-block;margin-left:6px}

@@ -299,6 +299,12 @@ class Database:
                 out.append("reminders.expiry")
             if "card_expiry_checks" not in tables:
                 out.append("card_expiry_checks")
+            if "reserves" not in tables or "reserve_links" not in tables:
+                out.append("reserves")
+            if "accounts" in tables and "system_role" not in {r[1] for r in con.execute("PRAGMA table_info(accounts)")}:
+                out.append("accounts.system_role")
+            if "reminders" in tables and "reserve_id" not in {r[1] for r in con.execute("PRAGMA table_info(reminders)")}:
+                out.append("reminders.reserve_id")
             return out
         finally:
             con.close()
@@ -484,6 +490,32 @@ class Database:
             # email rules: kind 'balance' (statement balance -> set-balance adjustment) + its reason (additive)
             if "adjust_reason" not in {r[1] for r in con.execute("PRAGMA table_info(email_rules)")}:
                 con.execute("ALTER TABLE email_rules ADD COLUMN adjust_reason TEXT DEFAULT ''")
+            # Reserves 押金/预授权 (additive): a reserve = money set aside with a merchant (hotel / rental) — a card hold
+            # (memo only, never a transaction) or a refundable deposit (a transfer into the system "Deposits 押金"
+            # receivable account, accounts.system_role='deposits', one per currency, created on first use). reserve_links
+            # tie transactions to it with a role (deposit / charge / refund / apply / forfeit / fx). No rows are created here.
+            con.execute("""CREATE TABLE IF NOT EXISTS reserves (
+                id INTEGER PRIMARY KEY, ledger_id INTEGER, method TEXT NOT NULL, title TEXT DEFAULT '', merchant_id INTEGER,
+                account_id INTEGER, deposit_account_id INTEGER, amount REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL,
+                start_date TEXT NOT NULL, end_date TEXT, category_id INTEGER, project_id INTEGER, member_id INTEGER, ref TEXT,
+                status TEXT NOT NULL DEFAULT 'open', closed_state TEXT, closed_reason TEXT, closed_at TEXT,
+                needs_review INTEGER DEFAULT 0, remind INTEGER DEFAULT 1, source TEXT DEFAULT 'web', external_id TEXT,
+                raw_text TEXT, note TEXT DEFAULT '', is_demo INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now','localtime')), updated_at TEXT)""")
+            con.execute("""CREATE TABLE IF NOT EXISTS reserve_links (
+                id INTEGER PRIMARY KEY, reserve_id INTEGER NOT NULL, transaction_id INTEGER NOT NULL, role TEXT NOT NULL,
+                amount REAL NOT NULL, alloc_amount REAL, final INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now','localtime')))""")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_rsl_res ON reserve_links(reserve_id)")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_rsl_tx ON reserve_links(transaction_id)")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_res_status ON reserves(status)")
+            con.execute("""CREATE TRIGGER IF NOT EXISTS trg_tx_delete_reserve AFTER DELETE ON transactions BEGIN
+                DELETE FROM reserve_links WHERE transaction_id=OLD.id; END""")
+            if "system_role" not in {r[1] for r in con.execute("PRAGMA table_info(accounts)")}:
+                con.execute("ALTER TABLE accounts ADD COLUMN system_role TEXT")
+            if "reserve_id" not in {r[1] for r in con.execute("PRAGMA table_info(reminders)")}:
+                con.execute("ALTER TABLE reminders ADD COLUMN reserve_id INTEGER")
+            con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rem_reserve ON reminders(reserve_id) WHERE kind='reserve'")
             # cursor pagination / account history (additive indexes)
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_date_id ON transactions(date, id)")
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_acct_date ON transactions(account_id, date, id)")

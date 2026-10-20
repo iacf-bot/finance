@@ -45,6 +45,10 @@ Screenshots (made with clearly labeled `[DEMO]` data, which has since been remov
     member, merchant, project, tags, note, source, and an attachment.
   * Search and filter by text, dates, type, account, category, member, merchant, project, tag and source.
   * Edit, delete, bulk delete, CSV export, and CSV import with column mapping.
+* **Reserves 押金/预授权**
+  * Hotel / rental card holds (a note only: never in balances or stats, the card shows *On hold* and less
+    available credit) and refundable deposits (a transfer into the system *Deposits 押金* account). One-step check-out
+    with preview, FX adjustment, reminders and email-alert detection. See [Reserves](#reserves-押金预授权-hotel-and-rental-deposits-card-holds).
 * **New transaction form 记一笔**
   * **Quick add → form:** next to *Add* in the header box (and on the Review page) there is **✎ Review / Open in
     form**. It parses your text without saving and opens the form pre-filled: type, amount, currency, account
@@ -613,6 +617,45 @@ API:
 - `GET /api/reimbursements/suggest?reimbursement_id=` (open expenses) or `?expense_id=` (reimbursements with unallocated money): best match first, with `default_amount`.
 - `POST /api/reimbursements/{id}/close` / `.../reopen` (or `.../write-off` with `{undo?}`), and `POST /api/reimbursements/mark` with `{ids, reimbursable, payer?}`.
 - CSV export adds `reimbursable, reimb_state, reimb_reimbursed, reimb_outstanding, reimb_counted, reimb_unallocated, reimb_links` (`#<other id>=<amount>; …`). The agent endpoint accepts `kind: "reimbursement"` with `payer` and `expense_ids` to link right away.
+
+## Reserves 押金/预授权 (hotel and rental deposits, card holds)
+
+IACF Personal Finance tracks money a hotel, rental company or landlord holds for you, from check-in to the refund. Open **🔒 Reserves** in the sidebar, or press **＋** and pick the **🔒 Reserve** tab.
+
+- **Card hold 预授权 (pre-authorization)** is a **note only**. No transaction is recorded, so card balances, net worth, budgets, reports and every KPI ignore it. While it is open, the card shows **🔒 On hold $X** and its available credit is lower by that amount. At check-out you enter the **final bill**, which is recorded once as a normal expense:
+  - lower than the hold: the rest is **released** (nothing is recorded);
+  - higher: the difference shows as **Over hold**;
+  - no charge at all: **Release** (or **Booking cancelled**).
+- **Deposit 押金** is money that left your account and should come back. It is recorded as a **transfer** into the system account **Deposits 押金** (type receivable, one per currency, e.g. `Deposits 押金 (EUR)`). That account is created the first time you need it, never at startup. Net worth does not change and nothing counts as spending. At check-out, split what is left:
+  - **Refund received**: a transfer back from Deposits to the account that got the money;
+  - **Applied to the bill**: an expense paid from the Deposits account;
+  - **Kept by the merchant** (damage, cleaning fee): an expense paid from the Deposits account;
+  - **Extra charge on the card**: a normal expense.
+
+  Only the applied and kept parts are spending. Interest paid on a deposit is ordinary income. A refund that came back as a *refund/income* (for example from an email) and is linked to a deposit is turned into a transfer from Deposits, so it is never income.
+- **Foreign currency.** A deposit in another currency stores both amounts (EUR at Deposits, USD charged to the card). If it comes back at a different rate, enter the amount that arrived. A small difference (up to 3 % or 1 unit) is posted as an **FX adjustment** on the Deposits account (reason *Correction*, so it is excluded from income and expense), and the account returns to exactly 0. A larger difference is rejected.
+- **Check out** 退房结算 is one step with a live **preview** (a dry run that saves nothing). The detail view shows the amounts and a **timeline**: check-in, deposit, charges, refund, kept part, FX adjustment, check-out, reminder and closed. Prepaid non-refundable bookings are not reserves: record them as ordinary expenses.
+- **Linking** is many-to-many with partial amounts. One bill can cover two rooms, and a reserve can take several charges. Linking more than the remaining deposit, or more than the unlinked part of a transaction, is refused. Link from the reserve (🔗 Link transaction, with suggestions by merchant, card and dates) or from the transaction dialog (*Link to a reserve…*). Lists show a 🔒 badge. Deleting a transaction removes its links (DB trigger). A linked transaction keeps its kind and currency, and a whole-amount link follows an amount edit.
+- **States:** Open → Partly settled → Settled up, or Released / Cancelled. Reopen undoes a close.
+- **Reminder.** If a hold is not released or a deposit not refunded, a *reserve* reminder is due **7 days after check-out**, or **30 days after check-in** when there is no check-out date. Change the days at the bottom of the Reserves page (settings `reserve_release_days`, `reserve_hold_days`, 0–365). It shows in Reminders (🧳 Check out / Open reserve) and goes out with the email reminders/reports and the Telegram push like the other reminders. It completes by itself when the reserve closes. You can turn it off per reserve (*Remind me if it is still open after check-out*).
+- **Email alerts.** Authorization wording ("authorization hold", "pre-authorization", "temporary hold", "预授权", "冻结", …), or a parsing rule of kind **Card hold → Reserve** (`hold`), creates a card hold that **needs review**. It appears in **Quick add & Review** and on the Reserves page, never as a transaction:
+  - ✓ **Confirm hold** to track it;
+  - **It's a real charge** turns it into an expense in the review queue.
+
+  Any review item can also be converted with **🔒 Reserve**.
+- **Upgrade:** the new tables `reserves` and `reserve_links`, the columns `accounts.system_role` and `reminders.reserve_id`, and a trigger are additive. The database is copied to the backups folder (`finance-…-before-migrate.db`) before the schema changes, and no rows are created.
+
+API:
+- `GET /api/reserves?state=open,partial (default)|settled|released|cancelled|all&method=hold|deposit&account_id=&project_id=&review=1` returns the items, with totals `on_hold` / `deposits` by currency and `state_counts`.
+- `POST /api/reserves` takes `{method, account_id, amount, currency?, merchant?, title?, start_date, end_date?, category_id?, project_id?, ref?, note?, remind?, paid_amount?}`. `GET|PUT|DELETE /api/reserves/{id}`; `DELETE` needs `?unlink=1` when transactions are linked, and the transactions stay.
+- `POST /api/reserves/{id}/settle` (check-out) takes `dry_run?` and either:
+  - hold: `{final: {amount | transaction_id, account_id?, category_id?, date?}}` or `{release: true}`;
+  - deposit: `{refund: {account_id, amount?, received?}, apply: {amount}, forfeit: {amount, note?}, charge: {amount, account_id?}}`.
+- `POST /api/reserves/{id}/links` takes `{transaction_id, role?, amount?, alloc_amount?, final?}` or `{items:[…]}` (all or nothing); `DELETE /api/reserves/links/{id}` unlinks.
+- `POST /api/reserves/{id}/release|close|cancel|reopen|confirm|to-transaction`, and `POST /api/review/{tid}/to-reserve` with `{method, …}`.
+- `GET /api/reserves/suggest?reserve_id=` or `?transaction_id=`, and `GET /api/reserves/export.csv`.
+
+Screenshots (FAKE `[DEMO]` data): `docs/screenshots/54_reserves_list.png`, `55_reserve_detail_timeline.png`, `56_reserve_checkout.png`, `57_reserve_reminder.png` (each with a `_zh` version).
 
 ## Email rules: Balance adjust 调整余额 (statement balance)
 - A parsing rule with **Kind = Balance adjust** (`kind: "balance"`) treats the extracted amount as the account's **new balance** (statement value), not a transaction amount.

@@ -137,11 +137,44 @@ def load_demo(db: Database) -> dict:
             con.execute("INSERT OR REPLACE INTO budgets(ledger_id,category_id,month,amount,is_demo) VALUES(1,?,?,?,1)", (cid, month, amt))
     for t, p in (("VTI", 268.4), ("AAPL", 228.1), ("BTC-USD", 64000)):
         set_price(db, t, p, "USD", "demo")
+    demo_reserves(db, A, today)
     return {"ok": True, "transactions": len(txs) + 2, "accounts": len(DEMO_ACCOUNTS)}
+
+
+def demo_reserves(db: Database, A, today: date) -> None:
+    """FAKE Reserves 押金/预授权: card holds (settled over the hold, overdue, from an email to review), a rent deposit
+    and a CNY car-rental deposit partly kept, refunded at a different rate (FX adjustment)."""
+    from . import reserves
+    hotel = _cat(db, "expense", "Travel & Hotels")
+    car = _cat(db, "expense", "Car Rental") or hotel
+    ds = lambda n: (today - timedelta(days=n)).isoformat()
+    h = reserves.create(db, {"method": "hold", "account_id": A("Chase Sapphire"), "amount": 300, "merchant": "[DEMO] Hilton Chicago",
+                             "title": "[DEMO] Hilton Chicago", "start_date": ds(20), "end_date": ds(17), "category_id": hotel,
+                             "ref": "CONF-DEMO-1001", "is_demo": True})
+    reserves.settle(db, h["id"], {"final": {"amount": 412.50, "date": ds(17), "note": "[DEMO] Hilton final bill"}, "date": ds(17)})
+    reserves.create(db, {"method": "hold", "account_id": A("Amex Gold"), "amount": 250, "merchant": "[DEMO] Marriott Downtown",
+                         "title": "[DEMO] Marriott Downtown", "start_date": ds(14), "end_date": ds(10), "category_id": hotel,
+                         "ref": "CONF-DEMO-2002", "is_demo": True})
+    reserves.create(db, {"method": "deposit", "account_id": A("Chase Checking"), "amount": 1500, "title": "[DEMO] Apartment security deposit",
+                         "merchant": "[DEMO] Lakeside Apartments", "start_date": ds(150), "remind": False,
+                         "note": "[DEMO] returned when the lease ends", "is_demo": True})
+    c = reserves.create(db, {"method": "deposit", "account_id": A("Chase Sapphire"), "amount": 2000, "currency": "CNY",
+                             "title": "[DEMO] 上海租车 car rental", "merchant": "[DEMO] 上海租车", "start_date": ds(30), "end_date": ds(26),
+                             "category_id": car, "is_demo": True})
+    rates = ledger.fx_rates(db)
+    recv = round(ledger.convert(1700, "CNY", "USD", rates) * 1.012, 2)  # the refund arrived at a slightly better rate
+    reserves.settle(db, c["id"], {"forfeit": {"amount": 300, "note": "[DEMO] scratch repair"},
+                                  "refund": {"account_id": A("Chase Sapphire"), "received": recv, "date": ds(22)}, "date": ds(24)})
+    reserves.create(db, {"method": "hold", "account_id": A("Chase Sapphire"), "amount": 200, "merchant": "[DEMO] Hyatt Regency",
+                         "title": "[DEMO] Hyatt Regency", "start_date": ds(1), "needs_review": True, "source": "email",
+                         "note": "[DEMO] Authorization hold placed on your card", "is_demo": True})
 
 
 def clear_demo(db: Database) -> dict:
     with db.tx() as con:
+        con.execute("DELETE FROM reserve_links WHERE reserve_id IN (SELECT id FROM reserves WHERE is_demo=1)")
+        con.execute("DELETE FROM reminders WHERE kind='reserve' AND reserve_id IN (SELECT id FROM reserves WHERE is_demo=1)")
+        con.execute("DELETE FROM reserves WHERE is_demo=1")
         demo_accts = [r[0] for r in con.execute("SELECT id FROM accounts WHERE is_demo=1")]
         q = ",".join("?" * len(demo_accts)) or "NULL"
         n = con.execute(f"DELETE FROM transactions WHERE is_demo=1 OR note LIKE '[DEMO]%' OR account_id IN ({q}) OR to_account_id IN ({q})",
