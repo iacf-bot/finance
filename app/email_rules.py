@@ -46,7 +46,8 @@ PRESET_RULES: list[dict[str, Any]] = [
      "note": "中国银行卡/信用卡动账短信或邮件, e.g. 您尾号1234的信用卡…消费人民币35.00元 (best effort)"},
 ]
 
-RULE_KINDS = ("auto", "expense", "income", "refund", "balance")
+RULE_KINDS = ("auto", "expense", "income", "refund", "balance", "hold")
+# kind "hold": a card authorization / pre-authorization alert -> a card-hold Reserve (预授权) in the review queue
 # Templates offered in Settings → Parsing rules → "From template" (NOT inserted automatically; saved disabled).
 RULE_TEMPLATES: list[dict[str, Any]] = [
     {"name": "Statement balance (Total Account Value)", "sender_pattern": "", "subject_pattern": "",
@@ -60,6 +61,8 @@ RULE_TEMPLATES: list[dict[str, Any]] = [
 INCOME_HINTS = ["deposit", "credited", "direct deposit", "payment received", "you received", "refund", "credit posted",
                 "存入", "入账", "收入", "退款", "转入", "到账"]
 REFUND_HINTS = ["refund", "退款", "returned", "credit for return"]
+HOLD_HINTS = ["authorization hold", "pre-authorization", "preauthorization", "pre-authorisation", "pre-auth", "temporary hold",
+              "hold placed", "hold has been placed", "incidental hold", "预授权", "冻结"]
 TRANSFER_HINTS = ["thank you for your payment", "payment posted", "payment was received", "还款"]
 GENERIC_MERCHANT = [
     r"(?:Merchant|Where|Payee|Description)\s*:\s*(.+?)(?:\n|$)",
@@ -110,6 +113,8 @@ def _to_float(s: str | None) -> float | None:
 
 def detect_kind(text: str) -> str:
     low = text.lower()
+    if any(h in low for h in HOLD_HINTS):
+        return "hold"
     if any(h in low for h in TRANSFER_HINTS):
         return "payment"
     if any(h in low for h in REFUND_HINTS):

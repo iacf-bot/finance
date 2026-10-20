@@ -569,6 +569,26 @@ def ingest_email(db: Database, msg: dict, mailbox: dict | None = None, auto_post
             account_id = int(dflt); conf += 0.1; reasons.append("default account")
     kind = ex.get("kind") or "expense"
     to_account_id = None
+    if kind == "hold":  # card authorization hold 预授权 -> a hold Reserve to review (never a transaction)
+        date_h = None
+        if msg.get("received_at"):
+            try:
+                date_h = ledger._norm_date(msg["received_at"])
+            except ledger.ValidationError:
+                date_h = None
+        if account_id:
+            from . import reserves
+            try:
+                r = reserves.create_from_email(db, ex, account_id, date_h, mid, subject)
+                reasons.append("card hold → Reserves (review)")
+                _log(db, **logbase, result="review", detail="; ".join(reasons), rule_name=ex.get("rule_name"), confidence=round(min(conf, 1.0), 2))
+                ex.pop("text", None)
+                return {"created": True, "result": "review", "kind": "hold", "reasons": reasons, "extracted": ex, "reserve": r}
+            except ledger.ValidationError as e:
+                reasons.append(str(e))
+        kind = "expense"  # no card found: an expense to review (it can be converted to a reserve there)
+        conf = min(conf, 0.5)
+        reasons.append("card hold: choose the card, then convert it to a reserve")
     if kind == "payment":  # credit card payment received -> transfer needs a source; leave for review
         kind = "transfer"
         to_account_id, account_id = account_id, None

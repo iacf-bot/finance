@@ -166,8 +166,8 @@ def refresh(db: Database, on: date | None = None) -> int:
 
 def run(db: Database, on: date | None = None, notify: bool = True) -> dict:
     on = on or today(db)
-    new = generate_cards(db, on) + generate_expiry(db, on)
-    done = refresh(db, on) + refresh_expiry(db, on)
+    new = generate_cards(db, on) + generate_expiry(db, on) + generate_reserves(db, on)
+    done = refresh(db, on) + refresh_expiry(db, on) + refresh_reserves(db, on)
     sent = notify_due(db, on) if notify else 0
     return {"as_of": on.isoformat(), "created": len(new), "auto_completed": done, "notified": sent}
 
@@ -198,6 +198,8 @@ def _decorate(db: Database, r: dict, on: date) -> dict:
         r.update(expiry_info(db, r, on))
         r["paid"] = r["remaining"] = r["statement_amount"] = None
         r["expired"] = bool(due and due < on)
+    if r["kind"] == "reserve":
+        r.update(reserve_info(db, r))
     return r
 
 
@@ -206,6 +208,8 @@ def lead_days(db: Database, r: dict) -> int:
     reminder_lead_days (default 10)."""
     if r.get("kind") == "card_expiry":
         return expiry_lead(db)
+    if r.get("kind") == "reserve":
+        return 0  # an unreleased hold / unrefunded deposit is chased from its due date (check-out + N days) on
     if r.get("kind") == "schedule" and r.get("schedule_id"):
         s = db.one("SELECT lead_days FROM schedules WHERE id=?", (r["schedule_id"],)) or {}
         if s.get("lead_days") is not None:
@@ -222,6 +226,7 @@ def listing(db: Database, view: str = "open", on: date | None = None) -> dict:
     if view not in VIEWS:
         raise ReminderError(f"view must be one of {VIEWS}")
     sync_expiry(db, on)
+    sync_reserves(db, on)
     rows = [_decorate(db, r, on) for r in db.all("SELECT * FROM reminders ORDER BY due_date, id")]
     counts = {k: sum(1 for r in rows if r["state"] == k) for k in ("upcoming", "later", "overdue", "snoozed", "done")}
     if view == "open":
@@ -242,6 +247,7 @@ def badge(db: Database, on: date | None = None, rows: list | None = None) -> int
     on = on or today(db)
     if rows is None:
         sync_expiry(db, on)
+        sync_reserves(db, on)
     rows = rows if rows is not None else [_decorate(db, r, on) for r in db.all("SELECT * FROM reminders WHERE status='open'")]
     return sum(1 for r in rows if r["state"] in ("overdue", "upcoming"))
 
@@ -305,6 +311,8 @@ def mark_paid(db: Database, rid: int, body: dict) -> dict:
     r = get(db, rid)
     if r["kind"] == "card_expiry":
         raise ReminderError("A card expiry reminder has no payment: confirm the card and its scheduled payments, or press Done")
+    if r["kind"] == "reserve":
+        raise ReminderError("Check out the reserve instead (Reserves → Check out): record the final bill, the refund or the part kept")
     tx = None
     if body.get("create_payment"):
         amount = body.get("amount")
@@ -357,6 +365,10 @@ def digest(db: Database, days: int = 7, include_overdue: bool = True, lang: str 
             r["detail"] = expiry_text(r, zh)
             lines.append(f"{'⚠️ ' if r['state'] == 'overdue' else ''}💳 {r['detail']}")
             continue
+        if r["kind"] == "reserve":
+            r["detail"] = reserve_text(r, zh)
+            lines.append(f"{'⚠️ ' if r['state'] == 'overdue' else ''}🔒 {r['detail']}")
+            continue
         amt = r["remaining"] if r["remaining"] is not None else r["statement_amount"]
         due = _d(r["due_date"])
         when = (f"逾期 {-r['days_left']} 天" if zh else f"OVERDUE {-r['days_left']}d") if r["state"] == "overdue" else \
@@ -373,7 +385,7 @@ def digest(db: Database, days: int = 7, include_overdue: bool = True, lang: str 
     return {"count": n, "title": title, "message": msg, "items": [
         {k: r.get(k) for k in ("id", "kind", "title", "due_date", "days_left", "state", "statement_amount", "remaining",
                                "currency", "account_name", "account_last4", "expiry", "expiry_label", "pending_names",
-                               "card_confirmed", "new_expiry_label", "detail")} for r in items], "today": on.isoformat()}
+                               "card_confirmed", "new_expiry_label", "detail", "reserve_id", "reserve_method", "reserve_end", "reserve_start")} for r in items], "today": on.isoformat()}
 
 
 _TW = (("已于", "已於"), ("将于", "將於"), ("请更新以下定期付款的卡", "請更新以下定期付款的卡"),
@@ -679,3 +691,93 @@ def confirm_card(db: Database, rid: int, body: dict) -> dict:
     refresh_expiry(db)
     generate_expiry(db)
     return get(db, rid)
+
+
+# ---------------------------------------------------------------- reserves 押金/预授权
+# One 'reserve' reminder per open reserve (reminders.reserve_id, unique), due check-out + reserve_release_days (default
+# 7) or check-in + reserve_hold_days (default 30) without a check-out date; lead 0 = it shows (and is pushed by
+# email / Telegram) from that day. It completes by itself when the reserve closes and comes back if it is reopened.
+_TW_RES = (("预授权", "預授權"), ("押金", "押金"), ("未释放", "未釋放"), ("未退还", "未退還"), ("退房", "退房"), ("入住", "入住"))
+
+
+def reserve_info(db: Database, r: dict) -> dict:
+    from . import reserves
+    try:
+        x = reserves.get(db, r["reserve_id"])
+    except KeyError:
+        return {"reserve_method": None, "reserve_state": "deleted"}
+    return {"reserve_method": x["method"], "reserve_state": x["state"], "remaining": x["outstanding"],
+            "statement_amount": x["amount"], "paid": None, "reserve_end": x.get("end_date"), "reserve_start": x["start_date"],
+            "title": x["label"], "currency": x["currency"]}
+
+
+def reserve_text(r: dict, zh: bool, tw: bool = False) -> str:
+    """One line for a reserve reminder (Telegram / email / iPhone notify); tw = Traditional Chinese (emails)."""
+    from .ingest import fmt_money
+    amt = fmt_money(r["remaining"], r["currency"]) if r.get("remaining") is not None else ""
+    end, start = r.get("reserve_end"), r.get("reserve_start")
+    hold = r.get("reserve_method") == "hold"
+    if zh:
+        s = f"{r.get('title') or ''} · {'预授权' if hold else '押金'} {amt} {'未释放' if hold else '未退还'}"
+        s += f"（退房 {end}）" if end else (f"（入住 {start}）" if start else "")
+        if tw:
+            for a, b in _TW_RES:
+                s = s.replace(a, b)
+        return s
+    s = f"{r.get('title') or ''} · {'hold' if hold else 'deposit'} {amt} {'not released' if hold else 'not refunded'}"
+    return s + (f" (check-out {end})" if end else (f" (check-in {start})" if start else ""))
+
+
+def generate_reserves(db: Database, on: date | None = None) -> list[int]:
+    """Create the reminder of every open reserve (idempotent per reserve); keep due date / amount in step."""
+    from . import reserves
+    on = on or today(db)
+    new = []
+    for x in reserves.list_reserves(db, {"state": "open,partial"})["items"]:
+        if not x.get("remind") or x.get("needs_review"):
+            continue
+        due = x["release_due"]
+        with db.tx() as con:
+            ex = con.execute("SELECT id, status, due_date, amount FROM reminders WHERE kind='reserve' AND reserve_id=?", (x["id"],)).fetchone()
+            if ex:
+                if ex["status"] == "open" and (ex["due_date"] != due or ex["amount"] != x["outstanding"]):
+                    con.execute("UPDATE reminders SET due_date=?, amount=?, title=?, updated_at=? WHERE id=?",
+                                (due, x["outstanding"], x["label"], now_iso(), ex["id"]))
+                continue
+            new.append(con.execute("""INSERT INTO reminders(kind, reserve_id, account_id, title, due_date, amount, currency, status,
+                created_at, updated_at) VALUES('reserve',?,?,?,?,?,?,'open',?,?)""",
+                (x["id"], x["account_id"], x["label"], due, x["outstanding"], x["currency"], now_iso(), now_iso())).lastrowid)
+    return new
+
+
+def refresh_reserves(db: Database, on: date | None = None) -> int:
+    """Open reserve reminders complete when the reserve closes (or reminders are turned off for it), are dismissed
+    when it is deleted; ones completed that way reopen with the reserve."""
+    n = 0
+    for r in db.all("SELECT * FROM reminders WHERE kind='reserve' AND (status='open' OR done_reason LIKE 'reserve_%')"):
+        x = db.one("SELECT status, remind, needs_review FROM reserves WHERE id=?", (r["reserve_id"],))
+        kw = None
+        if r["status"] == "open":
+            if not x:
+                kw = ("dismissed", "reserve_deleted")
+            elif x["status"] in ("settled", "released", "cancelled"):
+                kw = ("done", "reserve_" + x["status"])
+            elif not x["remind"]:
+                kw = ("dismissed", "reserve_no_reminder")
+        elif x and x["status"] in ("open", "partial") and x["remind"] and r["done_reason"] != "reserve_deleted":
+            with db.tx() as con:
+                con.execute("UPDATE reminders SET status='open', done_reason=NULL, done_at=NULL, notified_at=NULL, updated_at=? WHERE id=?",
+                            (now_iso(), r["id"]))
+            n += 1
+        if kw:
+            with db.tx() as con:
+                con.execute("UPDATE reminders SET status=?, done_reason=?, done_at=?, updated_at=? WHERE id=? AND status='open'",
+                            (kw[0], kw[1], now_iso(), now_iso(), r["id"]))
+            n += 1
+    return n
+
+
+def sync_reserves(db: Database, on: date | None = None) -> None:
+    on = on or today(db)
+    refresh_reserves(db, on)
+    generate_reserves(db, on)

@@ -193,6 +193,8 @@ def accounts_with_balances(db: Database, include_archived: bool = True) -> list[
         hc[h["account_id"]] += h["cost"]
     accts = db.all("""SELECT a.*, g.name group_name, g.sort group_sort FROM accounts a
                       LEFT JOIN account_groups g ON g.id=a.group_id ORDER BY g.sort, a.sort, a.name""")
+    from .reserves import holds_by_account
+    holds = holds_by_account(db)
     recon = {r["account_id"]: r for r in db.all("""SELECT account_id, MAX(as_of) as_of, COUNT(*) n FROM reconciliations
                                                      GROUP BY account_id""")}
     out = []
@@ -211,8 +213,10 @@ def accounts_with_balances(db: Database, include_archived: bool = True) -> list[
         a["balance_base"] = round(convert(a["balance"], a["currency"], base, rates), 2)
         if a["is_liability"]:
             a["owed"] = round(-a["balance"], 2)
+        # open card holds 预授权 (Reserves) are memo only: the balance never includes them, available credit does
+        a["on_hold"] = holds.get(a["id"], 0.0)
         if a["type"] == "credit_card":
-            a["available_credit"] = round((a["credit_limit"] or 0) + a["balance"], 2) if a["credit_limit"] else None
+            a["available_credit"] = round((a["credit_limit"] or 0) + a["balance"] - a["on_hold"], 2) if a["credit_limit"] else None
         out.append(a)
     return out
 
@@ -572,6 +576,7 @@ def update_tx(db: Database, tid: int, data: dict) -> dict:
         if not ex:
             raise KeyError(tid)
         ex = dict(ex)
+        orig = dict(ex)
         if "currency" not in data and ex.get("orig_currency"):
             # editing a converted row: keep the stored (account currency) amount unless a new one is sent
             ex["currency"] = None
@@ -592,6 +597,8 @@ def update_tx(db: Database, tid: int, data: dict) -> dict:
         tx["updated_at"] = now_iso()
         cols = [k for k in TX_FIELDS + ["updated_at"] if k in tx]
         con.execute(f"UPDATE transactions SET {','.join(c + '=?' for c in cols)} WHERE id=?", [tx[k] for k in cols] + [tid])
+        from .reserves import check_tx_update  # reserve 押金 links: kind/currency locked, whole-amount links follow
+        check_tx_update(con, orig, tx)
         if not tx.get("reimbursable"):
             con.execute("UPDATE transactions SET reimb_writeoff=0 WHERE id=?", (tid,))
     return get_tx(db, tid)
@@ -631,7 +638,8 @@ def get_tx(db: Database, tid: int) -> dict | None:
     if not r:
         return None
     from .reimburse import annotate  # local import: reimburse imports this module
-    return annotate(db, [decorate(r)], links=True)[0]
+    from .reserves import annotate as reserve_badges
+    return reserve_badges(db, annotate(db, [decorate(r)], links=True))[0]
 
 
 def _tx_where(f: dict) -> tuple[str, list]:
@@ -707,7 +715,8 @@ def query_tx(db: Database, f: dict) -> tuple[list[dict], int]:
     offset = int(f.get("offset") or 0)
     rows = db.all(f"{TX_SELECT}{w} ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?", params + [limit, offset])
     from .reimburse import annotate
-    return annotate(db, [decorate(r) for r in rows], links=bool(f.get("with_links"))), total
+    from .reserves import annotate as reserve_badges
+    return reserve_badges(db, annotate(db, [decorate(r) for r in rows], links=bool(f.get("with_links")))), total
 
 
 def encode_cursor(t: dict) -> str:
@@ -755,6 +764,8 @@ def page_tx(db: Database, f: dict) -> dict:
     rows = rows[:limit]
     from .reimburse import annotate
     annotate(db, rows)  # reimbursement status badges
+    from .reserves import annotate as reserve_badges
+    reserve_badges(db, rows)  # reserve 押金/预授权 badges
     out = {"items": rows, "has_more": has_more, "next_cursor": encode_cursor(rows[-1]) if has_more and rows else None}
     if not cur or str(f.get("with_total", "")).lower() in ("1", "true"):
         s = _summary(db, w, params)

@@ -170,7 +170,7 @@ function mailboxForm(m) {
   $('[data-ok]', bg).onclick = async () => { await guard(() => api(isNew ? '/api/mailboxes' : '/api/mailboxes/' + m.id, {method: isNew ? 'POST' : 'PUT', body: collect()})); bg.close(); toast('Saved'); route(); };
 }
 const REASON_NAMES = {investment_gain: 'Gain/loss', interest: 'Interest', fees: 'Fees', unrecorded_spending: 'Unrecorded spending', unrecorded_income: 'Unrecorded income', correction: 'Correction/other', opening: 'Opening balance'};
-const KIND_NAMES = {auto: 'auto', expense: 'expense', income: 'income', refund: 'refund', balance: 'Balance adjust'};
+const KIND_NAMES = {auto: 'auto', expense: 'expense', income: 'income', refund: 'refund', balance: 'Balance adjust', hold: 'Card hold → Reserve'};
 function balancePreviewTxt(p) {
   if (!p) return '';
   if (!p.ok) return `⚠️ ${p.problem}`;
@@ -189,6 +189,7 @@ function ruleForm(r, tpl) {
    <label class="f full"><span>Merchant regex</span><input class="mono" name="merchant_regex" value="${esc(r.merchant_regex || '')}"></label>
    <label class="f"><span>Last-4 regex</span><input class="mono" name="last4_regex" value="${esc(r.last4_regex || '')}" placeholder="ending in (\\d{4})"></label>
    <label class="f"><span>Kind</span><select name="kind">${Object.entries(KIND_NAMES).map(([k, l]) => `<option value="${k}" ${r.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+   <div class="f full small muted" id="rfHold"${r.kind === 'hold' ? '' : ' hidden'}>🔒 A card authorization / pre-authorization alert: it becomes a card hold in Reserves to review (never a transaction). Authorization wording is also detected with kind auto.</div>
    <label class="f" id="rfReason"${r.kind === 'balance' ? '' : ' hidden'}><span>Adjustment reason</span><select name="adjust_reason"><option value="">Account default (gain/loss for investment accounts)</option>${Object.entries(REASON_NAMES).map(([k, l]) => `<option value="${k}" ${r.adjust_reason === k ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">The amount found is the NEW account balance (statement value); the account is matched by its last 4 digits and the difference is recorded like Set balance, dated the email date.</span></label>
    <label class="f"><span>Enabled</span><select name="enabled"><option value="1" ${r.enabled ? 'selected' : ''}>Yes</option><option value="0" ${r.enabled ? '' : 'selected'}>No (disabled)</option></select></label>
    <label class="f"><span>Currency (blank = detect / account currency)</span><input name="currency" value="${esc(r.currency || '')}"></label>
@@ -196,7 +197,7 @@ function ruleForm(r, tpl) {
    <label class="f full"><span>Try it: paste a sample email body (the subject is included automatically)</span><textarea id="sample" placeholder="You made a $12.34 transaction with TEST MERCHANT on your card ending in 0000"></textarea></label>
    <div class="full"><button type="button" class="btn sm" id="tryR">Test this rule</button> <span id="tryOut" class="small mono"></span></div></form>`, {wide: true, buttons: '<button class="btn pri" data-ok>Save</button>'});
   const f = $('#rf2', bg);
-  f.kind.onchange = () => { $('#rfReason', bg).hidden = f.kind.value !== 'balance'; };
+  f.kind.onchange = () => { $('#rfReason', bg).hidden = f.kind.value !== 'balance'; $('#rfHold', bg).hidden = f.kind.value !== 'hold'; };
   $('#tryR', bg).onclick = async () => { const rule = Object.fromEntries(new FormData(f)); const res = await guard(() => api('/api/email-rules/test', {method: 'POST', body: {from: (rule.sender_pattern || '').replace(/\\/g, ''), subject: '', body: $('#sample', bg).value, rule}}));
     const bp = res.balance_preview; delete res.balance_preview; $('#tryOut', bg).textContent = (bp ? '🧮 ' + balancePreviewTxt(bp) + '\n' : '') + JSON.stringify(res); };
   $('[data-ok]', bg).onclick = async () => { await guard(() => api(isNew ? '/api/email-rules' : '/api/email-rules/' + r.id, {method: isNew ? 'POST' : 'PUT', body: Object.fromEntries(new FormData(f))})); bg.close(); route(); };
