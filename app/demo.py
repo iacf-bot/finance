@@ -168,11 +168,17 @@ def demo_reserves(db: Database, A, today: date) -> None:
     reserves.create(db, {"method": "hold", "account_id": A("Chase Sapphire"), "amount": 200, "merchant": "[DEMO] Hyatt Regency",
                          "title": "[DEMO] Hyatt Regency", "start_date": ds(1), "needs_review": True, "source": "email",
                          "note": "[DEMO] Authorization hold placed on your card", "is_demo": True})
+    # an email alert that was recorded as spending but is really a deposit: the review queue suggests "Convert to reserve"
+    ledger.create_tx(db, {"kind": "expense", "date": ds(2) + " 16:40", "amount": 350, "account_id": A("Chase Sapphire"),
+                          "merchant": "[DEMO] Lakeside Cabin Rentals", "status": "review", "confidence": 0.8, "source": "email",
+                          "note": "[DEMO] Security deposit charged to your card", "category_id": hotel, "is_demo": 1,
+                          "raw_text": "[DEMO] Lakeside Cabin Rentals: a $350.00 security deposit was charged to your card ending 0000."})
 
 
 def clear_demo(db: Database) -> dict:
     with db.tx() as con:
         con.execute("DELETE FROM reserve_links WHERE reserve_id IN (SELECT id FROM reserves WHERE is_demo=1)")
+        con.execute("DELETE FROM reserve_conversions WHERE reserve_id IN (SELECT id FROM reserves WHERE is_demo=1)")
         con.execute("DELETE FROM reminders WHERE kind='reserve' AND reserve_id IN (SELECT id FROM reserves WHERE is_demo=1)")
         con.execute("DELETE FROM reserves WHERE is_demo=1")
         demo_accts = [r[0] for r in con.execute("SELECT id FROM accounts WHERE is_demo=1")]

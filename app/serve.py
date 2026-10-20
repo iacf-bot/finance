@@ -86,7 +86,7 @@ def main():
             s.close()
         sys.exit(2)
     if not socks:
-        log.error("No address could be bound on port %d. Another program (or another copy of IACF Finance) may be using it; "
+        log.error("No address could be bound on port %d. Another program (or another copy of IACF Personal Finance) may be using it; "
                   "set PORT in .env to use a different port.", port)
         sys.exit(1)
     from .main import create_app

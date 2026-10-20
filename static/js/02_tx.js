@@ -58,7 +58,7 @@ function txDesc(t) {
   const tags = (t.tags || '').split(',').filter(Boolean).map(x => `<span class="pill">#${esc(x)}</span>`).join(' ');
   const demo = isDemoName(t.account_name) || /^\[DEMO\]/.test(t.note || '') ? '<span class="pill demo">DEMO</span> ' : '';
   const rb = t.kind === 'expense' && t.reimbursable ? txReimbPill(t) : t.kind === 'reimbursement' ? txReimbPill(t) : '';
-  const rs = t.reserves && t.reserves.length && typeof txReservePill === 'function' ? txReservePill(t) : '';
+  const rs = t.reserves && t.reserves.length && typeof txReservePill === 'function' ? txReservePill(t) : t.reserve_hint && typeof txHintPill === 'function' ? txHintPill(t) : '';
   return `<div>${demo}${rb}${rs}<b>${main}</b> ${tags}</div><div class="small muted">${t.kind !== 'transfer' ? esc(t.account_name || '— no account —') + ' · ' : ''}${bits.join(' · ')}${t.note ? ' · ' + esc(t.note.slice(0, 80)) : ''}${t.attachment ? ' · 📎' : ''}</div>`;
 }
 /* reimbursement status badge in transaction lists: expense open / partial / closed, reimbursement unallocated money */
@@ -104,7 +104,7 @@ VIEWS.transactions = async (v, rest) => {
     <select name="has_taxtip"><option value="">Tax/tip: any</option><option value="tax" ${f.has_tax === '1' ? 'selected' : ''}>With tax</option><option value="tip" ${f.has_tip === '1' ? 'selected' : ''}>With tip</option></select>
     <select name="reconciled"><option value="">Reconciled or not</option><option value="1" ${f.reconciled === '1' ? 'selected' : ''}>✔ Reconciled</option><option value="0" ${f.reconciled === '0' ? 'selected' : ''}>Not reconciled</option></select>
     <div class="row"><button class="btn pri">Filter</button><button type="button" class="btn" id="fReset">Reset</button></div></form></div>
-  <div class="card" style="margin-top:14px"><h3><span id="txCount"></span><span class="sp"></span>
+  <div class="card" style="margin-top:14px"><h3 class="tx-head"><span id="txCount"></span><span class="sp"></span>
     <button class="btn sm" id="bulkPrj" disabled>📁 Assign project</button> <button class="btn sm danger" id="bulkDel" disabled>Delete selected</button>
     <a class="btn sm" id="expCsv">⬇ Export CSV</a><a class="btn sm" href="#/settings/import">⬆ Import</a><button class="btn sm pri" onclick="openTx()">+ New</button></h3><div id="txList"></div>
     </div>`;
@@ -169,7 +169,9 @@ async function openTx(id, after, preset = {}, opts = {}) {
   if (isReview) { if (!t.amount) unsure.add('amount'); if (!t.account_id) unsure.add('account_id'); if (['expense', 'income', 'refund'].includes(t.kind) && !t.category_id) unsure.add('category_id'); if (t.kind === 'transfer' && !t.to_account_id) unsure.add('to_account_id'); }
   if (unsure.has('account_id')) unsure.add('from_account_id');
   const U = name => unsure.has(name) ? ' unsure' : '';
-  const html = `<div class="kind-tabs${U('kind')}">${['expense', 'income', 'transfer', 'refund', 'reimbursement', 'adjustment', 'buy', 'sell', 'dividend', 'invest_fee'].map(k => `<button type="button" data-k="${k}" class="${t.kind === k ? 'on' : ''}">${kindLabel[k]}</button>`).join('')}${(isNew || isReview) && !SCH ? `<button type="button" data-rsv class="rs-tab" title="${isReview ? 'Convert this item into a card hold or deposit' : 'Hotel / rental deposit or card hold'}">🔒 Reserve</button>` : ''}</div>
+  const html = `<div class="kind-tabs${U('kind')}">${['expense', 'income', 'transfer', 'refund', 'reimbursement', 'adjustment', 'buy', 'sell', 'dividend', 'invest_fee'].map(k => `<button type="button" data-k="${k}" class="${t.kind === k ? 'on' : ''}">${kindLabel[k]}</button>`).join('')}${(isNew || isReview || t.status === 'posted') && !SCH && !(t.reserves || []).length ? `<button type="button" data-rsv class="rs-tab" title="${isNew ? 'Hotel / rental deposit or card hold' : 'Convert this transaction into a card hold or deposit'}">🔒 Reserve</button>` : ''}</div>
+  ${t.status === 'reserve' ? `<div class="demo-banner rs-held">🔒 Archived as a card hold: kept, but outside balances and stats. Open the reserve to undo.</div>` : ''}
+  ${id && t.reserve_hint && !(t.reserves || []).length && !SCH ? `<div class="demo-banner rs-hint">💡 ${t.reserve_hint === 'hold' ? 'This looks like a card hold (pre-authorization), not spending.' : 'This looks like a hotel or rental deposit, not spending.'} <button type="button" class="btn sm pri" data-rsv2>🔒 Convert to reserve</button></div>` : ''}
   ${isReview ? `<div class="demo-banner" style="background:#fff8e6;border-color:#e4a11b;color:#7a5200">📥 Review item from <b>${esc(t.source)}</b> ${confPill(t.confidence)} — check the fields${unsure.size ? ' (highlighted ones especially)' : ''} and press <b>Approve</b>.${t.raw_text ? `<div class="small mono" style="white-space:pre-wrap;max-height:120px;overflow:auto;margin-top:4px">${esc(t.raw_text.slice(0, 1500))}</div>` : ''}</div>` : ''}
   ${opts.banner ? `<div class="demo-banner prefill-banner"><div>✎ ${opts.banner}${unsure.size ? ' <b>Highlighted fields</b> are guesses — please check them.' : ''}</div></div>` : ''}
   <form id="txForm" class="form" autocomplete="off">
@@ -198,7 +200,7 @@ async function openTx(id, after, preset = {}, opts = {}) {
         <label class="f"><span>Expected amount <small class="muted">(default = amount)</small></span><input name="reimb_expected" type="number" step="0.01" inputmode="decimal" value="${t.reimb_expected ?? ''}"></label>
         <label class="f full"><span>Reimbursement note</span><input name="reimb_note" value="${esc(t.reimb_note || '')}"></label></div></div>
     <label class="f" data-show="reimbursement"><span>Paid back by (company / person)</span><input name="rb_from" list="dlPayer" value="${esc(t.kind === 'reimbursement' ? t.reimb_payer || '' : '')}"></label>
-    ${id && !isReview ? '<div class="full rb-linkbox" id="rsTxBox" hidden></div>' : ''}
+    ${id && !SCH ? '<div class="full rb-linkbox" id="rsTxBox" hidden></div>' : ''}
     ${id ? '<div class="full rb-linkbox" id="rbLinkBox" hidden></div>' : '<div class="full small muted" data-show="reimbursement">💡 A reimbursement is not income. After saving, link it to the reimbursable expenses it pays back (you can also do that later here or in Reimbursements).</div>'}
     <label class="f" id="prWrap" style="display:none"><span>Investment: counts as</span><select name="pr_class">${[['', 'Auto'], ['principal', 'Principal'], ['returns', 'Returns'], ['unexplained', 'Unexplained']].map(([v, l]) => `<option value="${v}" ${((t.pr_class === 'other' ? 'unexplained' : t.pr_class) || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="small muted">Only for investment accounts, e.g. mark a deposit as returns.</span></label>
     <label class="f" data-show="buy sell dividend invest_fee"><span>Ticker</span><input name="ticker" value="${esc(t.ticker || '')}" placeholder="AAPL, VTI, 600519.SS, BTC-USD"></label>
@@ -303,7 +305,13 @@ async function openTx(id, after, preset = {}, opts = {}) {
   api('/api/reimbursements?status=all').then(d => { $('#dlPayer').innerHTML = d.payers.map(p => `<option value="${esc(p)}">`).join(''); }).catch(() => {});
   sync();
   const rsBtn = $('[data-rsv]', bg);
-  if (rsBtn) rsBtn.onclick = () => {
+  const toReserve = async () => {  // an existing transaction: keep the edits made in the form, then convert it (same id)
+    try { await reconApi(`/api/transactions/${id}`, {method: 'PUT', body: collect()}); } catch (e) { return; }
+    bg.close(); rsConvertDialog(id, async () => { await loadMeta(); if (after) after(); else route(); });
+  };
+  const rs2 = $('[data-rsv2]', bg); if (rs2) rs2.onclick = toReserve;
+  if (rsBtn && id) rsBtn.onclick = toReserve;
+  else if (rsBtn) rsBtn.onclick = () => {
     const a = +(form.account_id.value || form.from_account_id.value) || null;
     const preset = {account_id: a, amount: form.amount.value || '', currency: form.currency.value, merchant: form.merchant.value, note: form.note.value,
       start_date: (form.date.value || '').slice(0, 10) || today(), category_id: kind === 'expense' ? (+form.category_id.value || null) : null,

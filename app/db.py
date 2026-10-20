@@ -305,6 +305,8 @@ class Database:
                 out.append("accounts.system_role")
             if "reminders" in tables and "reserve_id" not in {r[1] for r in con.execute("PRAGMA table_info(reminders)")}:
                 out.append("reminders.reserve_id")
+            if "reserve_conversions" not in tables:
+                out.append("reserve_conversions")
             return out
         finally:
             con.close()
@@ -516,6 +518,13 @@ class Database:
             if "reserve_id" not in {r[1] for r in con.execute("PRAGMA table_info(reminders)")}:
                 con.execute("ALTER TABLE reminders ADD COLUMN reserve_id INTEGER")
             con.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_rem_reserve ON reminders(reserve_id) WHERE kind='reserve'")
+            # A transaction turned into a reserve keeps its id; `orig` is the full row as JSON before the change, so the
+            # conversion can be undone exactly (additive; no rows are created here).
+            con.execute("""CREATE TABLE IF NOT EXISTS reserve_conversions (
+                id INTEGER PRIMARY KEY, reserve_id INTEGER NOT NULL, transaction_id INTEGER NOT NULL, method TEXT NOT NULL,
+                orig TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now','localtime')))""")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_rsc_res ON reserve_conversions(reserve_id)")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_rsc_tx ON reserve_conversions(transaction_id)")
             # cursor pagination / account history (additive indexes)
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_date_id ON transactions(date, id)")
             con.execute("CREATE INDEX IF NOT EXISTS ix_tx_acct_date ON transactions(account_id, date, id)")

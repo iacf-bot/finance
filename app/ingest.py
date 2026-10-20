@@ -621,6 +621,11 @@ def ingest_email(db: Database, msg: dict, mailbox: dict | None = None, auto_post
             "merchant": ex.get("merchant"), "note": f"{subject}".strip()[:200], "source": source,
             "status": status, "confidence": conf, "raw_text": text[:4000], "external_id": mid,
             "ledger_id": int(db.get_setting("default_ledger_id", "1") or 1)}
+    from .reserves import hint_for
+    hint = hint_for({"kind": kind, "status": status, "merchant": ex.get("merchant"), "note": data["note"], "raw_text": text})
+    if hint:  # looks like a hotel / rental deposit or a card hold: To review with a "Convert to reserve" hint (never auto-converted)
+        data["status"] = status = "review"
+        reasons.append(f"looks like a {hint}: Convert to reserve is suggested")
     try:
         tx = ledger.create_tx(db, data)
     except ledger.ValidationError as e:
@@ -630,7 +635,8 @@ def ingest_email(db: Database, msg: dict, mailbox: dict | None = None, auto_post
     _log(db, **logbase, result=status, detail="; ".join(reasons), rule_name=ex.get("rule_name"), confidence=conf,
          transaction_id=tx["id"])
     ex.pop("text", None)
-    return {"created": True, "result": status, "confidence": conf, "reasons": reasons, "extracted": ex, "transaction": tx}
+    return {"created": True, "result": status, "confidence": conf, "reasons": reasons, "extracted": ex, "transaction": tx,
+            "reserve_hint": hint}
 
 
 # ---------------------------------------------------------------- IMAP

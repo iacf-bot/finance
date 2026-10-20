@@ -21,6 +21,8 @@ Linking never changes how a transaction counts in stats: there is no reserve sta
 """
 from __future__ import annotations
 
+import json
+import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
@@ -216,6 +218,7 @@ def get(db: Database, rid: int) -> dict:
     if not r:
         raise NotFound(rid)
     out = decorate(db, r, _links(db, [rid]).get(rid, []))
+    out["converted"] = [_conv_view(c) for c in conversions(db, rid)]
     if out["state"] != r["status"]:
         with db.tx() as con:
             con.execute("UPDATE reserves SET status=? WHERE id=?", (out["state"], rid))
@@ -238,6 +241,9 @@ def list_reserves(db: Database, f: dict | None = None) -> dict:
     lk = _links(db, [r["id"] for r in rows])
     on = _today(db)
     items = [decorate(db, r, lk.get(r["id"], []), on) for r in rows]
+    conv = {c["reserve_id"] for c in db.all("SELECT DISTINCT reserve_id FROM reserve_conversions")}
+    for x in items:
+        x["is_converted"] = x["id"] in conv
     stale = [(x["state"], x["id"]) for x, r in zip(items, rows) if x["state"] != r["status"]]
     if stale:
         with db.tx() as con:
@@ -406,6 +412,17 @@ def delete(db: Database, rid: int, unlink: bool = False) -> dict:
     stay). Its reminder is dismissed."""
     if not db.one("SELECT 1 x FROM reserves WHERE id=?", (rid,)):
         raise NotFound(rid)
+    convs = conversions(db, rid)
+    if convs:
+        own = {c["transaction_id"] for c in convs}
+        others = [l for l in db.all("SELECT id, transaction_id FROM reserve_links WHERE reserve_id=?", (rid,)) if l["transaction_id"] not in own]
+        if others and not unlink:
+            raise ValidationError(f"{len(others)} transaction(s) are linked to this reserve: unlink them first (the transactions are kept)")
+        if others:
+            with db.tx() as con:
+                con.executemany("DELETE FROM reserve_links WHERE id=?", [(l["id"],) for l in others])
+        # deleting a converted reserve never loses the transaction it came from: it is restored first
+        return {**unconvert(db, rid), "unlinked": len(others)}
     n = db.one("SELECT COUNT(*) n FROM reserve_links WHERE reserve_id=?", (rid,))["n"]
     if n and not unlink:
         raise ValidationError(f"{n} transaction(s) are linked to this reserve: unlink them first (the transactions are kept)")
@@ -569,10 +586,36 @@ def link(db: Database, rid: int, body: dict) -> dict:
     return get(db, rid)
 
 
+def link_from_tx(db: Database, tid: int, body: dict) -> dict:
+    """From the transaction's side: {reserve_id, role?, amount? (partial, in the transaction's currency), alloc_amount?,
+    final?}. A To-review item is approved first (back to review if the link is refused)."""
+    from . import ledger
+    body = dict(body or {})
+    try:
+        rid = int(body.pop("reserve_id"))
+    except (KeyError, TypeError, ValueError):
+        raise ValidationError("Choose a reserve (reserve_id)")
+    t = db.one("SELECT status FROM transactions WHERE id=?", (tid,))
+    if not t:
+        raise KeyError(tid)
+    approved = False
+    if t["status"] == "review":
+        ledger.update_tx(db, tid, {"status": "posted"})
+        approved = True
+    try:
+        return link(db, rid, {**body, "transaction_id": tid})
+    except Exception:
+        if approved:
+            ledger.update_tx(db, tid, {"status": "review"})
+        raise
+
+
 def unlink(db: Database, lid: int) -> dict:
     l = db.one("SELECT * FROM reserve_links WHERE id=?", (lid,))
     if not l:
         raise NotFound(lid)
+    if db.one("SELECT 1 x FROM reserve_conversions WHERE reserve_id=? AND transaction_id=?", (l["reserve_id"], l["transaction_id"])):
+        raise ValidationError("This reserve was converted from that transaction: use Undo conversion instead (it restores the transaction)")
     with db.tx() as con:
         con.execute("DELETE FROM reserve_links WHERE id=?", (lid,))
         _sync(con, l["reserve_id"])
@@ -756,6 +799,10 @@ def to_transaction(db: Database, rid: int) -> dict:
     date, email id) and the reserve goes away."""
     from . import ledger
     r = get(db, rid)
+    if r.get("converted"):  # it came from a transaction: give that transaction back instead of making a new one
+        tid = r["converted"][0]["transaction_id"]
+        unconvert(db, rid)
+        return ledger.get_tx(db, tid)
     if r["method"] != "hold" or r["link_count"]:
         raise ValidationError("Only an unlinked card hold can be turned into a charge")
     rates = fx_rates(db)
@@ -770,35 +817,164 @@ def to_transaction(db: Database, rid: int) -> dict:
     return ledger.get_tx(db, tid)
 
 
-def from_review(db: Database, tid: int, body: dict) -> dict:
-    """Convert a To-review item into a reserve (hold or deposit) with its amount, account, merchant, date and email id;
-    the review item is removed. Body overrides any field (method, end_date, title, …)."""
-    t = db.one("SELECT t.*, m.name merchant_name FROM transactions t LEFT JOIN merchants m ON m.id=t.merchant_id WHERE t.id=?", (tid,))
-    if not t:
-        raise NotFound(tid)
-    if t["status"] != "review":
-        raise ValidationError("Only items in the review queue can be converted (link posted transactions instead)")
-    if t["kind"] not in ("expense", "transfer", "refund", "income"):
-        raise ValidationError("This kind of item can't become a reserve")
-    data = {"method": body.get("method") or "hold", "account_id": t["account_id"],
-            "amount": t["orig_amount"] if t["orig_currency"] else t["amount"], "currency": t["orig_currency"] or t["currency"],
-            "merchant": t["merchant_name"], "start_date": (t["date"] or "")[:10], "category_id": t["category_id"] if t["kind"] == "expense" else None,
-            "project_id": t["project_id"], "member_id": t["member_id"], "note": t["note"], "source": t["source"],
-            "external_id": t["external_id"], "raw_text": t["raw_text"], "ledger_id": t["ledger_id"], "is_demo": t["is_demo"]}
-    if not t["merchant_name"] and t["note"]:
-        data["title"] = str(t["note"]).strip()[:120]
-    data.update({k: v for k, v in (body or {}).items() if v not in (None, "")})
-    if not data.get("account_id"):
-        raise ValidationError("Choose the card or account first (account_id)")
-    method = str(data.get("method")).lower()
+CONVERT_KINDS = {"deposit": ("expense", "transfer"), "hold": ("expense", "transfer", "refund", "income")}
+HELD = "reserve"   # transactions.status of a transaction archived as a card hold: kept, but outside balances and stats
+
+
+def _tx_row(con, tid: int):
+    return con.execute("SELECT t.*, m.name merchant_name FROM transactions t LEFT JOIN merchants m ON m.id=t.merchant_id "
+                       "WHERE t.id=?", (tid,)).fetchone()
+
+
+def convert_tx(db: Database, tid: int, body: dict | None = None) -> dict:
+    """Turn an existing transaction (posted, To-review, or created by an email rule) into a reserve. It KEEPS its id,
+    attachments and history; the row as it was is saved in reserve_conversions so unconvert() restores it exactly.
+
+    method deposit 押金 — the expense was really a deposit: it is re-recorded as a transfer from its account into the
+      "Deposits 押金" account (same id, same amount/date/merchant/note; category, tax/tip and reimbursable cleared), so it
+      stops counting as spending and net worth is unchanged. Linked as the reserve's deposit.
+    method hold 预授权 — the charge was only a card authorization: the transaction is archived (status 'reserve'), so it
+      leaves balances and every stat, and a hold memo takes its place.
+    Merchant, amount, currency (the original currency for a foreign charge), date, account, project, member and note
+    are prefilled; body overrides title, end_date, category_id (for the final bill), ref, remind, note."""
+    body = dict(body or {})
+    method = str(body.get("method") or "deposit").lower()
     if method not in METHODS:
         raise ValidationError("method must be hold or deposit")
     rates, base = fx_rates(db), db.get_setting("base_currency", "USD")
     with db.tx() as con:
-        rid = _create(con, data, method, rates, base, bool(data.get("is_demo")))
-        con.execute("UPDATE receipts SET transaction_id=NULL WHERE transaction_id=?", (tid,))
-        con.execute("DELETE FROM transactions WHERE id=?", (tid,))
+        t = _tx_row(con, tid)
+        if not t:
+            raise NotFound(tid)
+        t = dict(t)
+        if t["status"] not in ("posted", "review"):
+            raise ValidationError("Only posted or To-review transactions can become a reserve")
+        if t["kind"] not in CONVERT_KINDS[method]:
+            raise ValidationError("Only an expense (or a transfer) can become a deposit" if method == "deposit"
+                                  else "This kind of transaction can't become a card hold")
+        if con.execute("SELECT 1 FROM reserve_links WHERE transaction_id=?", (tid,)).fetchone():
+            raise ValidationError("This transaction is already linked to a reserve: unlink it first")
+        if con.execute("SELECT 1 FROM reimb_links WHERE expense_id=? OR receipt_id=?", (tid, tid)).fetchone():
+            raise ValidationError("This transaction is linked to a reimbursement: unlink it first")
+        if not t.get("account_id"):
+            raise ValidationError("Choose the card or account first (account_id)")
+        orig = {k: t.get(k) for k in TX_FIELDS + ["id", "created_at", "updated_at"]}
+        cur = str(body.get("currency") or t["orig_currency"] or t["currency"]).upper()
+        amt = t["orig_amount"] if t["orig_currency"] and cur == t["orig_currency"] else (t["to_amount"] if t["kind"] == "transfer" and t.get("to_amount") else t["amount"])
+        data = {"account_id": t["account_id"], "amount": amt, "currency": cur, "merchant": t["merchant_name"],
+                "start_date": (t["date"] or "")[:10], "project_id": t["project_id"], "member_id": t["member_id"],
+                "note": t["note"] or "", "source": t["source"], "external_id": t["external_id"], "raw_text": t["raw_text"],
+                "ledger_id": t["ledger_id"], "category_id": t["category_id"] if t["kind"] == "expense" else None}
+        if not t["merchant_name"] and t["note"]:
+            data["title"] = str(t["note"]).strip()[:120]
+        for k in ("title", "end_date", "category_id", "ref", "remind", "note", "merchant"):
+            if body.get(k) not in (None, ""):
+                data[k] = body[k]
+        demo = bool(t.get("is_demo"))
+        if method == "deposit":
+            dep = deposits_account(con, cur, base, demo)
+            if t["kind"] != "transfer" or t["to_account_id"] != dep["id"]:
+                acur = con.execute("SELECT currency FROM accounts WHERE id=?", (t["account_id"],)).fetchone()["currency"]
+                to_amt = None if acur == cur else _r2(amt)
+                con.execute("""UPDATE transactions SET kind='transfer', to_account_id=?, to_amount=?, orig_amount=NULL,
+                               orig_currency=NULL, category_id=NULL, tax_amount=NULL, tip_amount=NULL, tax_rate=NULL,
+                               reimbursable=0, reimb_payer=NULL, reimb_expected=NULL, status='posted', confidence=NULL,
+                               updated_at=? WHERE id=?""", (dep["id"], to_amt, now_iso(), tid))
+            data["deposit_tx_id"] = tid
+            rid = _create(con, data, "deposit", rates, base, demo)
+        else:
+            rid = _create(con, data, "hold", rates, base, demo)
+            con.execute("UPDATE transactions SET status=?, updated_at=? WHERE id=?", (HELD, now_iso(), tid))
+        con.execute("INSERT INTO reserve_conversions(reserve_id, transaction_id, method, orig, created_at) VALUES(?,?,?,?,?)",
+                    (rid, tid, method, json.dumps(orig, ensure_ascii=False, default=str), now_iso()))
     return get(db, rid)
+
+
+def from_review(db: Database, tid: int, body: dict) -> dict:
+    """A To-review item → reserve (same as convert_tx: the item keeps its id and the conversion can be undone)."""
+    t = db.one("SELECT status FROM transactions WHERE id=?", (tid,))
+    if not t:
+        raise NotFound(tid)
+    if t["status"] != "review":
+        raise ValidationError("Only items in the review queue can be converted here")
+    return convert_tx(db, tid, {"method": "hold", **(body or {})})
+
+
+def _restore_tx(con, orig: dict, conv: dict) -> int:
+    """Put a transaction back exactly as it was before the conversion (re-inserted with its id if it was deleted)."""
+    tid = int(orig["id"])
+    cols = [k for k in TX_FIELDS if k in orig]
+    cur = con.execute("SELECT status FROM transactions WHERE id=?", (tid,)).fetchone()
+    other = con.execute("SELECT 1 FROM reserve_conversions WHERE transaction_id=? AND id<>?", (tid, conv["id"])).fetchone()
+    # still the converted row? (SQLite may reuse the id of a deleted row for a newer transaction)
+    same = cur and not other and (cur["status"] == HELD if conv["method"] == "hold" else bool(con.execute(
+        "SELECT 1 FROM reserve_links WHERE reserve_id=? AND transaction_id=? AND role='deposit'", (conv["reserve_id"], tid)).fetchone()
+        or con.execute("SELECT 1 FROM transactions t JOIN reserves r ON r.id=? WHERE t.id=? AND t.kind='transfer' "
+                       "AND t.to_account_id=r.deposit_account_id", (conv["reserve_id"], tid)).fetchone()))
+    if same:
+        con.execute(f"UPDATE transactions SET {', '.join(c + '=?' for c in cols)}, updated_at=? WHERE id=?",
+                    [orig[c] for c in cols] + [now_iso(), tid])
+        return tid
+    # it was deleted meanwhile: re-insert it, with its id unless SQLite gave that id to a newer transaction
+    allc = cols + ["created_at", "updated_at"]
+    vals = [orig[c] for c in cols] + [orig.get("created_at") or now_iso(), now_iso()]
+    if not cur:
+        allc, vals = ["id"] + allc, [tid] + vals
+    return con.execute(f"INSERT INTO transactions({','.join(allc)}) VALUES({','.join('?' * len(allc))})", vals).lastrowid
+
+
+def conversions(db: Database, rid: int) -> list[dict]:
+    return db.all("SELECT * FROM reserve_conversions WHERE reserve_id=? ORDER BY id", (rid,))
+
+
+def _conv_view(c: dict) -> dict:
+    o = json.loads(c["orig"])
+    return {"id": c["id"], "transaction_id": c["transaction_id"], "method": c["method"], "created_at": c["created_at"],
+            "orig_kind": o.get("kind"), "orig_status": o.get("status"), "orig_amount": o.get("amount"),
+            "orig_currency": o.get("currency"), "orig_date": o.get("date"), "orig_note": o.get("note")}
+
+
+def unconvert(db: Database, rid: int) -> dict:
+    """Undo convert_tx: the transaction gets back its kind, accounts, category, status (posted or To-review) and every
+    other field, and the reserve is deleted. Refused while OTHER transactions are linked (unlink them first)."""
+    if not db.one("SELECT 1 x FROM reserves WHERE id=?", (rid,)):
+        raise NotFound(rid)
+    convs = conversions(db, rid)
+    if not convs:
+        raise ValidationError("This reserve wasn't converted from a transaction")
+    own = {c["transaction_id"] for c in convs}
+    others = db.all("SELECT transaction_id, role FROM reserve_links WHERE reserve_id=?", (rid,))
+    others = [o for o in others if o["transaction_id"] not in own]
+    if others:
+        raise ValidationError(f"{len(others)} other transaction(s) are linked to this reserve: unlink them first")
+    restored = []
+    with db.tx() as con:
+        for c in reversed(convs):
+            restored.append(_restore_tx(con, json.loads(c["orig"]), c))
+        con.execute("DELETE FROM reserve_links WHERE reserve_id=?", (rid,))
+        con.execute("DELETE FROM reserve_conversions WHERE reserve_id=?", (rid,))
+        con.execute("DELETE FROM reserves WHERE id=?", (rid,))
+        con.execute("UPDATE reminders SET status='dismissed', done_reason='reserve_deleted', done_at=?, updated_at=? "
+                    "WHERE kind='reserve' AND reserve_id=? AND status='open'", (now_iso(), now_iso(), rid))
+    return {"ok": True, "restored": restored}
+
+
+# Wording in an email / bank alert / note that suggests a charge is really a deposit or a card hold (never auto-converted).
+HINT_RE = re.compile(r"(?<!direct )(?<!payroll )\b(security deposit|damage deposit|deposit|incidentals?|pre-?auth\w*|"
+                     r"authori[sz]ation hold|temporary (?:hold|authori[sz]ation)|card hold|hold placed|on hold)\b|"
+                     r"押金|预授权|預授權|冻结|凍結|保证金|保證金", re.I)
+
+
+def hint_for(t: dict) -> str | None:
+    """'deposit' or 'hold' when an expense looks like a hotel / rental deposit or a card hold, else None."""
+    if t.get("kind") != "expense" or t.get("status") not in ("posted", "review") or t.get("reserves"):
+        return None
+    text = " ".join(str(t.get(k) or "")[:1500] for k in ("merchant_name", "merchant", "note", "raw_text"))
+    m = HINT_RE.search(text)
+    if not m:
+        return None
+    w = m.group(0).lower()
+    return "hold" if any(x in w for x in ("auth", "hold", "预授权", "預授權", "冻结", "凍結")) else "deposit"
 
 
 def create_from_email(db: Database, ex: dict, account_id, date_s: str | None, mid: str, subject: str) -> dict:
@@ -885,15 +1061,28 @@ def annotate(db: Database, rows: list[dict]) -> list[dict]:
     for l in db.all(f"""SELECT l.transaction_id, l.role, r.id, r.title, r.status, r.method FROM reserve_links l
                         JOIN reserves r ON r.id=l.reserve_id WHERE l.transaction_id IN ({','.join('?' * len(ids))})""", ids):
         lk[l["transaction_id"]].append({"id": l["id"], "role": l["role"], "title": l["title"], "state": l["status"], "method": l["method"]})
+    conv = {c["transaction_id"]: c for c in db.all(f"""SELECT c.transaction_id, c.method, c.reserve_id, r.title, r.status
+                    FROM reserve_conversions c JOIN reserves r ON r.id=c.reserve_id
+                    WHERE c.transaction_id IN ({','.join('?' * len(ids))})""", ids)}
     for r in rows:
         if r.get("id") in lk:
             r["reserves"] = lk[r["id"]]
+        c = conv.get(r.get("id"))
+        if c:
+            r["reserve_conversion"] = {"reserve_id": c["reserve_id"], "method": c["method"], "title": c["title"], "state": c["status"]}
+            if not r.get("reserves"):  # a hold conversion has no link: still show the badge
+                r["reserves"] = [{"id": c["reserve_id"], "role": "converted", "title": c["title"], "state": c["status"], "method": c["method"]}]
+        h = hint_for(r)
+        if h:
+            r["reserve_hint"] = h
     return rows
 
 
 def check_tx_update(con, ex: dict, tx: dict) -> None:
     """Called by ledger.update_tx: a transaction linked to a reserve keeps its kind and currency; a whole-amount
     link follows a changed amount."""
+    if ex.get("status") == HELD:
+        raise ValidationError("This transaction was turned into a card hold: undo the conversion on the reserve first")
     links = con.execute("SELECT * FROM reserve_links WHERE transaction_id=?", (ex["id"],)).fetchall()
     if not links:
         return

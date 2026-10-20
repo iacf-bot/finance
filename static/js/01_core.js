@@ -164,9 +164,30 @@ function renderNav() {
   let cur = (location.hash.slice(2) || 'home').split(/[/?]/)[0]; if (cur === 'account') cur = 'accounts';
   const rc = S.meta ? S.meta.review_count + (S.meta.reserve_review_count || 0) : 0;
   $('#nav').innerHTML = ROUTES.map(([k, i, l]) => `<a href="#/${k}" class="${k === cur ? 'active' : ''}"><span class="ico">${i}</span>${l}${k === 'review' && rc ? `<span class="badge">${rc}</span>` : ''}${k === 'reserves' && S.meta && S.meta.reserve_review_count ? `<span class="badge" title="Holds found in emails to review">${S.meta.reserve_review_count}</span>` : ''}${k === 'reminders' && S.meta && S.meta.reminder_count ? `<span class="badge">${S.meta.reminder_count}</span>` : ''}</a>`).join('');
-  const mob = ['home', 'transactions', 'accounts', 'review', 'settings'];
-  $('#mnav').innerHTML = ROUTES.filter(r => mob.includes(r[0])).map(([k, i, l]) => `<a href="#/${k}" class="${k === cur ? 'active' : ''}"><span class="ico">${i}</span>${l.split(' ')[0].replace('Quick', 'Review')}${k === 'review' && rc ? `<span class="badge">${rc}</span>` : ''}</a>`).join('');
+  // phone: four pages in the bottom bar + "More" (a sheet with every other page, the language, ledger and log out)
+  const mob = ['home', 'transactions', 'accounts', 'review'];
+  const more = ROUTES.filter(r => !mob.includes(r[0]));
+  const moreBadge = (S.meta && (S.meta.reserve_review_count || 0) + (S.meta.reminder_count || 0)) || 0;
+  $('#mnav').innerHTML = ROUTES.filter(r => mob.includes(r[0])).map(([k, i, l]) => `<a href="#/${k}" class="${k === cur ? 'active' : ''}"><span class="ico">${i}</span>${l.split(' ')[0].replace('Quick', 'Review')}${k === 'review' && rc ? `<span class="badge">${rc}</span>` : ''}</a>`).join('')
+    + `<a href="javascript:void 0" id="mMore" class="${more.some(r => r[0] === cur) ? 'active' : ''}" aria-haspopup="true"><span class="ico">☰</span>More${moreBadge ? `<span class="badge">${moreBadge}</span>` : ''}</a>`;
+  $('#mMore').onclick = mobileMore;
 }
+/* phone "More" sheet: every page that is not in the bottom bar (Reserves, Reimbursements, Reminders, …) */
+function mobileMore() {
+  const old = $('#mSheet'); if (old) { old.remove(); return; }
+  const cur = (location.hash.slice(2) || 'home').split(/[/?]/)[0];
+  const badge = k => k === 'reserves' && S.meta.reserve_review_count ? S.meta.reserve_review_count : k === 'reminders' && S.meta.reminder_count ? S.meta.reminder_count : 0;
+  const el = document.createElement('div'); el.id = 'mSheet'; el.className = 'm-sheet-bg';
+  el.innerHTML = `<div class="m-sheet" role="menu"><div class="m-grid">${ROUTES.filter(r => !['home', 'transactions', 'accounts', 'review'].includes(r[0])).map(([k, i, l]) => `<a href="#/${k}" role="menuitem" class="${k === cur ? 'active' : ''}"><span class="ico">${i}</span><span>${l}</span>${badge(k) ? `<span class="badge">${badge(k)}</span>` : ''}</a>`).join('')}</div>
+    <div class="m-foot"><select id="mLang" aria-label="Language" data-notr>${$('#langSel').innerHTML}</select><select id="mLedger" aria-label="Ledger">${$('#ledgerSel').innerHTML}</select><a href="#" id="mLogout">Log out</a></div></div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click', e => { if (e.target === el || e.target.closest('a[href^="#/"]')) el.remove(); });
+  $('#mLang', el).value = $('#langSel').value; $('#mLedger', el).value = $('#ledgerSel').value;
+  $('#mLang', el).onchange = e => { $('#langSel').value = e.target.value; $('#langSel').onchange(); };
+  $('#mLedger', el).onchange = e => { $('#ledgerSel').value = e.target.value; $('#ledgerSel').onchange(e); el.remove(); };
+  $('#mLogout', el).onclick = e => { e.preventDefault(); $('#logout').click(); };
+}
+window.addEventListener('hashchange', () => { const m = $('#mSheet'); if (m) m.remove(); });
 function renderLedgers() {
   const sel = $('#ledgerSel');
   sel.innerHTML = `<option value="">All ledgers</option>` + S.meta.ledgers.map(l => `<option value="${l.id}" ${l.id == S.ledger ? 'selected' : ''}>📒 ${esc(l.name)}</option>`).join('');

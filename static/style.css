@@ -293,3 +293,45 @@ td.rs-open,div.rs-open{background:none;color:inherit}
 .rs-set{margin-top:12px}.rs-set input{width:64px;display:inline-block}
 .kind-tabs .rs-tab{border-left:1px dashed var(--line)}
 .rs-pick{width:auto;display:inline-block;margin-left:6px}
+/* ---- transaction → reserve (convert / link / hint) ---- */
+.rs-txbox{display:flex;flex-direction:column;gap:6px}.rs-txbox-h{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.rs-txbox-a{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.rs-hint{background:#fff8e6;border:1px solid #f0c060;color:#7a5200;border-radius:8px;padding:6px 10px}
+.demo-banner.rs-hint{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+td .rs-hint{padding:3px 8px;margin-bottom:4px}
+.pill.rs-hint-pill{background:#fff4dc;color:#8a5a00}
+.rs-held{background:#eef0fb;border-color:#b8bde8;color:#33378a}
+.rs-conv{margin:6px 0 10px;padding:8px 12px;border:1px dashed #b8bde8;border-radius:10px;background:#f7f8fe}
+.rs-cv-tx{padding:8px 10px;background:#f7f8fa;border-radius:8px}
+.rs-cv-what{padding:8px 10px;border-left:3px solid var(--pri,#e8553e);background:#fff7f5;font-size:13px}
+.kind-tabs button:disabled{opacity:.4;cursor:not-allowed}
+.m-only{display:none}
+/* ---- phone "More" sheet (pages that are not in the bottom bar) ---- */
+.m-sheet-bg{position:fixed;inset:0;background:rgba(10,15,30,.35);z-index:29;display:flex;align-items:flex-end}
+.m-sheet{background:#fff;width:100%;border-radius:16px 16px 0 0;padding:14px 12px calc(70px + env(safe-area-inset-bottom));box-shadow:0 -6px 24px rgba(0,0,0,.18)}
+.m-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.m-grid a{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 4px;border-radius:10px;color:var(--text);text-decoration:none;font-size:12.5px;text-align:center;min-height:62px;background:#f6f7fa}
+.m-grid a.active{background:#fdece8;color:var(--pri)}.m-grid a .ico{font-size:21px}
+.m-grid .badge{position:absolute;top:4px;right:8px;background:#ff5b45;color:#fff;border-radius:8px;font-size:10px;padding:0 5px}
+.m-foot{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}.m-foot select{flex:1 1 40%;min-width:0}.m-foot a{color:var(--muted);padding:6px}
+@media (min-width:761px){.m-sheet-bg{display:none}}
+@media (max-width:760px){
+ .m-only{display:inline}
+ /* reserves list as cards */
+ table.rs-tbl thead{display:none}
+ table.rs-tbl,table.rs-tbl tbody{display:block}
+ table.rs-tbl tr{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"main amt" "stay open" "st act";gap:4px 10px;padding:10px 4px;border-bottom:1px solid var(--line)}
+ table.rs-tbl td{border:0;padding:0;display:block}
+ .rs-c-main{grid-area:main}.rs-c-amt{grid-area:amt}.rs-c-stay{grid-area:stay;white-space:normal}.rs-c-open{grid-area:open}.rs-c-st{grid-area:st}.rs-c-act{grid-area:act;align-self:end}
+ .rs-c-act .btn{min-height:38px}
+ .rb-cards{grid-template-columns:1fr 1fr}
+ .rs-set input{width:56px}
+ .rs-tl{padding-left:10px}.rs-tl-d{min-width:0;flex-basis:100%}
+ .rs-co-box{grid-template-columns:1fr}
+ .rs-amts{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .rs-txbox-a .btn{min-height:40px}
+ .page-h{flex-wrap:wrap;gap:8px}
+}
+@media (max-width:760px){.card h3.tx-head{flex-wrap:wrap;row-gap:6px}} /* the transactions header buttons no longer widen the phone page */
+/* phone: a wide table scrolls inside its card instead of widening the whole page (Reminders, Projects, …) */
+@media (max-width:760px){.card>table.t:not(.resp):not(.rs-tbl){display:block;overflow-x:auto;max-width:100%}.g2>*,.g3>*,.g4>*{min-width:0}}

@@ -284,7 +284,8 @@ def test_reminder_job(client, db):
     out_d = T - timedelta(days=9)
     h = res(client, method="hold", account_id=a["card"], amount=250, title="Old Hotel",
             start_date=(T - timedelta(days=12)).isoformat(), end_date=out_d.isoformat())
-    assert h["release_due"] == (out_d + timedelta(days=7)).isoformat() and h["overdue_days"] == 2
+    from app.schedules import local_today  # the app's today (its time zone) can differ from the box's around midnight
+    assert h["release_due"] == (out_d + timedelta(days=7)).isoformat() and h["overdue_days"] == (local_today(db) - out_d).days - 7
     n = res(client, method="hold", account_id=a["card"], amount=80, title="No checkout", start_date=TD)
     assert n["release_due"] == (T + timedelta(days=30)).isoformat()
     res(client, method="deposit", account_id=a["chk"], amount=900, title="Quiet", remind=False,
@@ -359,7 +360,8 @@ def test_email_hold_goes_to_review(client, db):
     # convert a review item into a reserve
     x = client.post(f"/api/review/{t['id']}/to-reserve", json={"method": "hold", "end_date": TD}).json()
     assert x["method"] == "hold" and x["amount"] == 75 and x["account_id"] == a["card"]
-    assert client.get(f"/api/transactions/{t['id']}").status_code == 404
+    kept = client.get(f"/api/transactions/{t['id']}").json()  # same id kept, archived out of the review queue and stats
+    assert kept["status"] == "reserve" and client.get("/api/review").json()["total"] == 0
     posted = tx(client, kind="expense", account_id=a["card"], amount=5)
     assert client.post(f"/api/review/{posted['id']}/to-reserve", json={}).status_code == 400
     from app.email_rules import detect_kind

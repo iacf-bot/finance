@@ -60,7 +60,7 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
     if start_background is None:
         start_background = os.environ.get("FINANCE_DISABLE_SCHEDULER") != "1"
 
-    app = FastAPI(title="IACF Finance", version="0.1.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
+    app = FastAPI(title="IACF Personal Finance", version="0.1.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.db = db
     app.state.secret = secret
     fails: dict[str, list[float]] = defaultdict(list)
@@ -743,8 +743,34 @@ def create_app(db_path: str | os.PathLike | None = None, start_background: bool 
 
     @app.post("/api/review/{tid}/to-reserve")
     def review_to_reserve(tid: int, body: dict = Body(default={})):
-        """Convert a To-review item into a reserve ({method: hold|deposit, end_date?, …})."""
+        """Convert a To-review item into a reserve ({method: hold|deposit, end_date?, …}); it keeps its id (undo restores it)."""
         return reserves.from_review(db, tid, body or {})
+
+    @app.post("/api/transactions/{tid}/to-reserve")
+    def tx_to_reserve(tid: int, body: dict = Body(default={})):
+        """Convert to reserve. {method: deposit (expense → transfer into Deposits 押金, stops counting as spending) |
+        hold (archived out of balances and stats), title?, end_date?, category_id?, ref?, remind?, note?}. Same id; the
+        original row is saved so POST /api/reserves/{id}/unconvert restores it exactly."""
+        try:
+            return reserves.convert_tx(db, tid, body or {})
+        except reserves.NotFound:
+            raise HTTPException(404, "Transaction not found")
+
+    @app.post("/api/transactions/{tid}/link-reserve")
+    def tx_link_reserve(tid: int, body: dict = Body(...)):
+        """Link to reserve: {reserve_id, role? (charge / refund / apply / forfeit / deposit; guessed), amount? (partial,
+        transaction currency), alloc_amount?, final?}. A To-review item is approved first."""
+        try:
+            return reserves.link_from_tx(db, tid, body or {})
+        except KeyError as e:
+            if isinstance(e, reserves.NotFound):
+                raise
+            raise HTTPException(404, "Transaction not found")
+
+    @app.post("/api/reserves/{rid}/unconvert")
+    def reserve_unconvert(rid: int):
+        """Undo 'Convert to reserve': the transaction is restored exactly as it was and the reserve is deleted."""
+        return reserves.unconvert(db, rid)
 
     @app.get("/api/transactions/export.csv")
     def export_tx(request: Request):

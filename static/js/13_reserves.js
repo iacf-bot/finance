@@ -37,12 +37,12 @@ VIEWS.reserves = async (v) => {
       <span class="chips" role="group" aria-label="${t('Status')}">${Object.entries(RS_STATE).map(([k, l]) => `<button type="button" class="chip${st.states.includes(k) ? ' on' : ''}" data-st="${k}" aria-pressed="${st.states.includes(k)}">${t(l)} <span class="cnt">${sc[k] || 0}</span></button>`).join('')}</span>
       <select name="method"><option value="">${t('Holds and deposits')}</option>${Object.entries(RS_METHOD).map(([k, l]) => `<option value="${k}" ${st.method === k ? 'selected' : ''}>${t(l)}</option>`).join('')}</select></form>
     ${d.items.filter(x => !x.needs_review).length ? `<div class="scroll-x"><table class="t rs-tbl"><thead><tr><th>${t('Stay')}</th><th>${t('Reserve')}</th><th class="right">${t('Amount')}</th><th class="right">${t('Open amount')}</th><th>${t('Status')}</th><th></th></tr></thead><tbody>
-      ${d.items.filter(x => !x.needs_review).map(x => `<tr data-rid="${x.id}"><td class="nowrap small">${esc(x.start_date)}${x.end_date ? ` → ${esc(x.end_date)}` : ''}</td>
-        <td class="rs-open"><div>${isDemoName(x.title) ? '<span class="pill demo">DEMO</span> ' : ''}${rsMethod(x)} <b>${esc(x.label)}</b></div><div class="small muted">${esc(x.account_name || '')}${x.ref ? ' · #' + esc(x.ref) : ''}${x.link_count ? ' · ' + esc(t('{n} linked', {n: x.link_count})) : ''}</div></td>
-        <td class="right nowrap">${money(x.amount, x.currency)}${x.over_hold > 0.005 ? `<div class="small warn-t">${esc(t('Over hold {amt}', {amt: money(x.over_hold, x.currency)}))}</div>` : ''}</td>
-        <td class="right nowrap"><b class="${rsOpenAmt(x) > 0.005 ? 'warn-t' : 'muted'}">${money(rsOpenAmt(x), x.currency)}</b></td>
-        <td>${rsBadge(x)}${rsDue(x)}</td>
-        <td class="rb-act nowrap">${x.closed ? '' : `<button class="btn sm pri" data-co="${x.id}">🧳 ${t('Check out')}</button>`} <button class="btn sm" data-op="${x.id}">${t('Details')}</button></td></tr>`).join('')}</tbody></table></div>`
+      ${d.items.filter(x => !x.needs_review).map(x => `<tr data-rid="${x.id}"><td class="nowrap small rs-c-stay">${esc(x.start_date)}${x.end_date ? ` → ${esc(x.end_date)}` : ''}</td>
+        <td class="rs-open rs-c-main"><div>${isDemoName(x.title) ? '<span class="pill demo">DEMO</span> ' : ''}${rsMethod(x)} <b>${esc(x.label)}</b></div><div class="small muted">${esc(x.account_name || '')}${x.ref ? ' · #' + esc(x.ref) : ''}${x.link_count ? ' · ' + esc(t('{n} linked', {n: x.link_count})) : ''}${x.is_converted ? ' · ↺ ' + t('From a transaction') : ''}</div></td>
+        <td class="right nowrap rs-c-amt">${money(x.amount, x.currency)}${x.over_hold > 0.005 ? `<div class="small warn-t">${esc(t('Over hold {amt}', {amt: money(x.over_hold, x.currency)}))}</div>` : ''}</td>
+        <td class="right nowrap rs-c-open"><span class="m-only small muted">${t('Open amount')} </span><b class="${rsOpenAmt(x) > 0.005 ? 'warn-t' : 'muted'}">${money(rsOpenAmt(x), x.currency)}</b></td>
+        <td class="rs-c-st">${rsBadge(x)}${rsDue(x)}</td>
+        <td class="rb-act nowrap rs-c-act">${x.closed ? '' : `<button class="btn sm pri" data-co="${x.id}">🧳 ${t('Check out')}</button>`} <button class="btn sm" data-op="${x.id}">${t('Details')}</button></td></tr>`).join('')}</tbody></table></div>`
       : `<div class="empty">${st.states.join() === 'open,partial' ? t('No open reserves. Add one when a hotel or rental company holds money on your card or takes a deposit.') : t('No matching reserves')}</div>`}
     <div class="small muted rs-set">${t('Remind me')} <input id="rsRel" type="number" min="0" max="365" value="${esc(set.reserve_release_days || '7')}"> ${t('days after check-out if a hold is not released or a deposit not refunded')} · ${t('without a check-out date')} <input id="rsHold" type="number" min="0" max="365" value="${esc(set.reserve_hold_days || '30')}"> ${t('days after check-in')} <button class="btn sm" id="rsSave">${t('Save')}</button>
       <div>${t('Reminders show in Reminders and go out by email and Telegram like the others.')}</div></div></div>`;
@@ -79,7 +79,7 @@ function rsTimeline(x) {
     const other = l.tx_currency !== x.currency ? ` <span class="muted">(${money(l.amount, l.tx_currency)})</span>` : '';
     const acc = l.tx_kind === 'transfer' ? `${esc(l.tx_account_name || '')} → ${esc(l.tx_to_account_name || '')}` : esc(l.tx_account_name || '');
     ev.push({d: (l.tx_date || '').slice(0, 10), k: 'l', html: `${ic} <b>${esc(lbl)}</b> ${money(l.alloc_amount, x.currency)}${other} <span class="small muted">${acc}${l.tx_note ? ' · ' + esc(l.tx_note.slice(0, 60)) : ''}</span>
-      <button type="button" class="lnk" data-otx="${l.transaction_id}" title="${t('Open the transaction')}">↗</button>${l.role === 'fx' ? '' : `<button type="button" class="lnk danger" data-lun="${l.id}" title="${t('Unlink')}" aria-label="${t('Unlink')}">✕</button>`}`});
+      <button type="button" class="lnk" data-otx="${l.transaction_id}" title="${t('Open the transaction')}">↗</button>${l.role === 'fx' || (x.converted || []).some(c => c.transaction_id === l.transaction_id) ? '' : `<button type="button" class="lnk danger" data-lun="${l.id}" title="${t('Unlink')}" aria-label="${t('Unlink')}">✕</button>`}`});
   }
   if (!x.closed && x.remind) ev.push({d: x.release_due, k: 'due', html: `⏰ <b>${t('Reminder')}</b> <span class="small ${x.overdue_days > 0 ? 'neg' : 'muted'}">${x.overdue_days > 0 ? esc(t('{n} days past the reminder date', {n: x.overdue_days})) : t('if still open')}</span>`});
   else if (x.closed_at || x.state) {
@@ -105,11 +105,13 @@ async function openReserve(id, after) {
     ${x.needs_review ? `<div class="demo-banner">📥 ${t('Found in an email: confirm it is a hold, or turn it into a charge.')}</div>` : ''}
     ${rsAmounts(x)}
     <h3>${t('Timeline')}</h3>${rsTimeline(x)}
+    ${(x.converted || []).length ? `<div class="rs-conv">↺ ${x.converted.map(c => esc(t(c.method === 'hold' ? 'Converted from transaction #{id}: it is archived (kept, outside balances and stats).' : 'Converted from transaction #{id}: the expense was re-recorded as this deposit transfer.', {id: c.transaction_id})) + ` <span class="small muted">${esc(t('Was: {kind} {amt} on {date}', {kind: t(kindLabel[c.orig_kind] || c.orig_kind || ''), amt: money(c.orig_amount, c.orig_currency), date: (c.orig_date || '').slice(0, 10)}))}</span>`).join('<br>')}
+      <div class="small muted">${t('Undo conversion puts the transaction back exactly as it was and deletes this reserve.')}</div></div>` : ''}
     ${x.note ? `<div class="small muted">📝 ${esc(x.note)}</div>` : ''}
     ${x.method === 'hold' ? `<div class="small muted">${t('A card hold is a note only: the card balance and your spending never include it. Link the final bill when it posts.')}</div>` : `<div class="small muted">${t('The deposit is a transfer to the Deposits account: your net worth does not change and it is not spending. Only the part kept or applied to the bill becomes an expense.')}</div>`}`,
     {wide: true, buttons: `${x.needs_review ? `<button class="btn pri" data-rvok="${x.id}">✓ ${t('Confirm hold')}</button><button class="btn" data-rvtx="${x.id}">🧾 ${t('It\'s a real charge')}</button>` : ''}
       ${x.closed ? `<button class="btn" data-a="reopen">${t('Reopen')}</button>` : `<button class="btn pri" data-a="checkout">🧳 ${t('Check out')}</button><button class="btn" data-a="link">🔗 ${t('Link transaction')}</button>${x.method === 'hold' ? `<button class="btn" data-a="release">${t('Release')}</button>${x.captured > 0.005 ? '' : `<button class="btn" data-a="cancel">${t('Booking cancelled')}</button>`}` : ''}`}
-      <button class="btn" data-a="edit">✎ ${t('Edit')}</button><button class="btn danger" data-a="delete">${t('Delete')}</button>`});
+      ${(x.converted || []).length ? `<button class="btn" data-a="unconvert">↺ ${t('Undo conversion')}</button>` : ''}<button class="btn" data-a="edit">✎ ${t('Edit')}</button><button class="btn danger" data-a="delete">${t('Delete')}</button>`});
   rsBindReview(bg, done);
   $$('[data-otx]', bg).forEach(b => b.onclick = () => openTx(+b.dataset.otx, () => { bg.close(); openReserve(id, after); }));
   $$('[data-lun]', bg).forEach(b => b.onclick = async () => { if (!await confirmBox(t('Unlink this transaction? It stays in your transactions.'))) return; await guard(() => api('/api/reserves/links/' + b.dataset.lun, {method: 'DELETE'})); bg.close(); openReserve(id, after); });
@@ -120,8 +122,17 @@ async function openReserve(id, after) {
     release: async () => { if (!await confirmBox(t('Release the hold? Nothing is recorded; the rest of the hold is freed on the card.'))) return; await guard(() => api(`/api/reserves/${id}/release`, {method: 'POST'})); toast(t('Released')); done(); },
     cancel: async () => { await guard(() => api(`/api/reserves/${id}/cancel`, {method: 'POST'})); toast(t('Cancelled')); done(); },
     reopen: async () => { await guard(() => api(`/api/reserves/${id}/reopen`, {method: 'POST'})); toast(t('Reopened')); bg.close(); openReserve(id, after); },
+    unconvert: async () => {
+      if (!await confirmBox(t('Undo the conversion? The transaction goes back exactly as it was and this reserve is deleted.'))) return;
+      await guard(() => api(`/api/reserves/${id}/unconvert`, {method: 'POST'})); toast(t('Conversion undone — transaction restored')); await loadMeta(); done();
+    },
     delete: async () => {
-      const n = x.link_count;
+      const conv = (x.converted || []).length, own = new Set((x.converted || []).map(c => c.transaction_id));
+      const n = x.links.filter(l => !own.has(l.transaction_id)).length;
+      if (conv) {
+        if (!await confirmBox(t('Delete this reserve? The transaction it was converted from is restored first.') + (n ? ' ' + t('Its {n} linked transaction(s) stay in your transactions, only the links go.', {n}) : ''))) return;
+        await guard(() => api(`/api/reserves/${id}${n ? '?unlink=1' : ''}`, {method: 'DELETE'})); toast(t('Deleted — transaction restored')); await loadMeta(); done(); return;
+      }
       if (!await confirmBox(n ? t('Delete this reserve? Its {n} linked transaction(s) stay in your transactions, only the links go.', {n}) : t('Delete this reserve?'))) return;
       await guard(() => api(`/api/reserves/${id}${n ? '?unlink=1' : ''}`, {method: 'DELETE'})); toast(t('Deleted')); done();
     },
@@ -282,20 +293,97 @@ async function rsLinkDialog(id, after) {
   };
 }
 
-/* transaction dialog: the reserves a transaction belongs to, and "link to a reserve" */
+/* transaction dialog (desktop and phone): the reserves a transaction belongs to, the "looks like a deposit / hold"
+   hint, and the two actions: Convert to reserve (deposit / card hold, undoable) and Link to reserve (partial amounts) */
+const RS_CONV_KINDS = {deposit: ['expense', 'transfer'], hold: ['expense', 'transfer', 'refund', 'income']};
 async function rsTxBox(box, tid, after) {
   const [tx, sg] = await Promise.all([api('/api/transactions/' + tid), api('/api/reserves/suggest?transaction_id=' + tid).catch(() => ({items: []}))]);
-  const mine = tx.reserves || [];
-  if (!mine.length && !sg.items.length) return;
+  const mine = (tx.reserves || []).filter(r => r.role !== 'converted');
+  const cv = tx.reserve_conversion;
+  if (!['posted', 'review', 'reserve'].includes(tx.status)) return;
   box.hidden = false;
-  box.innerHTML = `<div class="small"><b>🔒 ${t('Reserves')}</b> ${mine.map(r => `<a href="javascript:void 0" class="pill rs-m" data-ors="${r.id}">${esc(r.title || '#' + r.id)} · ${t(RS_ROLE[r.role] ? RS_ROLE[r.role][1] : r.role)}</a>`).join(' ')}
-    ${sg.items.length ? `<select id="rsPick" class="rs-pick"><option value="">${t('Link to a reserve…')}</option>${sg.items.map(r => `<option value="${r.id}" data-role="${r.role}">${esc(r.label)} · ${money(rsOpenAmt(r), r.currency)}</option>`).join('')}</select>` : ''}</div>`;
+  const canConv = !cv && !mine.length && !tx.reimbursable && RS_CONV_KINDS.hold.includes(tx.kind) && tx.status !== 'reserve';
+  const canLink = tx.status !== 'reserve' && !cv && ['expense', 'refund', 'income', 'transfer'].includes(tx.kind);
+  const hint = tx.reserve_hint && !mine.length && !cv;
+  box.innerHTML = `<div class="rs-txbox">
+    <div class="rs-txbox-h"><b>🔒 ${t('Reserve')}</b>
+      ${mine.map(r => `<a href="javascript:void 0" class="pill rs-m" data-ors="${r.id}">${esc(r.title || '#' + r.id)} · ${t(RS_ROLE[r.role] ? RS_ROLE[r.role][1] : r.role)}</a>`).join(' ')}
+      ${cv ? `<a href="javascript:void 0" class="pill rs-m" data-ors="${cv.reserve_id}">↺ ${esc(cv.title || '#' + cv.reserve_id)} · ${t(cv.method === 'hold' ? 'Converted to a card hold' : 'Converted to a deposit')}</a>` : ''}</div>
+    ${hint ? `<div class="rs-hint">💡 ${t(tx.reserve_hint === 'hold' ? 'This looks like a card hold (pre-authorization), not spending.' : 'This looks like a hotel or rental deposit, not spending.')} ${t('Convert it to a reserve?')}</div>` : ''}
+    ${tx.status === 'reserve' ? `<div class="small muted">${t('Archived as a card hold: kept, but outside balances and stats. Open the reserve to undo.')}</div>` : ''}
+    <div class="rs-txbox-a">${canConv ? `<button type="button" class="btn sm${hint ? ' pri' : ''}" data-rsconv>🔒 ${t('Convert to reserve')}</button>` : ''}
+      ${canLink ? `<button type="button" class="btn sm" data-rslink ${sg.items.length ? '' : 'disabled'} title="${sg.items.length ? '' : t('No open reserves')}">🔗 ${t('Link to reserve')}</button>${sg.items.length ? '' : ` <span class="small muted">${t('No open reserves')}</span>`}` : ''}
+      ${cv ? `<button type="button" class="btn sm" data-rsundo="${cv.reserve_id}">↺ ${t('Undo conversion')}</button>` : ''}</div></div>`;
   $$('[data-ors]', box).forEach(a => a.onclick = () => openReserve(+a.dataset.ors, after));
-  const p = $('#rsPick', box);
-  if (p) p.onchange = async () => { if (!p.value) return; await guard(() => api(`/api/reserves/${p.value}/links`, {method: 'POST', body: {transaction_id: tid}})); toast(t('Linked')); rsTxBox(box, tid, after); };
+  const c = $('[data-rsconv]', box); if (c) c.onclick = () => rsConvertDialog(tid, after);
+  const l = $('[data-rslink]', box); if (l) l.onclick = () => rsTxLinkDialog(tx, sg.items, after);
+  const u = $('[data-rsundo]', box);
+  if (u) u.onclick = async () => { if (!await confirmBox(t('Undo the conversion? The transaction goes back exactly as it was and this reserve is deleted.'))) return; await guard(() => api(`/api/reserves/${u.dataset.rsundo}/unconvert`, {method: 'POST'})); toast(t('Conversion undone — transaction restored')); await loadMeta(); if (after) after(); };
+}
+/* Convert to reserve: the same transaction becomes a deposit (transfer into Deposits 押金) or is archived as a card hold */
+async function rsConvertDialog(tid, after) {
+  await (S.meta || loadMeta());
+  const tx = await guard(() => api('/api/transactions/' + tid));
+  const cur = tx.orig_currency || tx.currency, amt = tx.orig_currency ? tx.orig_amount : tx.amount;
+  let method = RS_CONV_KINDS.deposit.includes(tx.kind) && tx.reserve_hint !== 'hold' ? 'deposit' : 'hold';
+  const acct = acctById(tx.account_id) || {};
+  const bg = modal(`🔒 ${t('Convert to reserve')}`, `<form class="form" id="rsCv" autocomplete="off">
+    <div class="full rs-cv-tx"><b>${esc(tx.merchant_name || tx.note || '')}</b> · ${money(amt, cur)} · ${esc(acct.name || '')} · ${esc((tx.date || '').slice(0, 10))}${tx.status === 'review' ? ` <span class="pill">${t('To review')}</span>` : ''}</div>
+    <div class="full kind-tabs rs-kinds">${Object.entries(RS_METHOD).map(([k, l]) => `<button type="button" data-m="${k}" ${RS_CONV_KINDS[k].includes(tx.kind) ? '' : 'disabled'}>${k === 'hold' ? '🔒' : '💰'} ${t(l)}</button>`).join('')}</div>
+    <div class="full rs-cv-what" data-for="deposit">${esc(t('The money was a deposit: this {kind} becomes a transfer from {account} to the Deposits account. It stops counting as spending and your net worth does not change.', {kind: t(kindLabel[tx.kind]).toLowerCase(), account: acct.name || ''}))}</div>
+    <div class="full rs-cv-what" data-for="hold">${t('It was only a card hold: the transaction is archived (kept, not deleted) and leaves balances and every stat. A card hold note takes its place.')}</div>
+    <label class="f"><span>${t('Title')}</span><input name="title" value="${esc(tx.merchant_name || (tx.note || '').slice(0, 120))}"></label>
+    <label class="f"><span>${t('Check-out')} <small class="muted">${t('(optional)')}</small></span><input name="end_date" type="date" min="${esc((tx.date || '').slice(0, 10))}"></label>
+    <label class="f"><span>${t('Category for the bill')}</span><select name="category_id">${catOptions('expense', tx.kind === 'expense' ? tx.category_id : null)}</select></label>
+    <label class="f"><span>${t('Confirmation #')}</span><input name="ref"></label>
+    <label class="chk full"><input type="checkbox" name="remind" checked> ${t('Remind me if it is still open after check-out')}</label>
+    <div class="full small muted">↺ ${t('Same transaction, same id and history. You can undo this from the reserve at any time.')}</div></form>`,
+    {buttons: `<button class="btn" data-x2>${t('Cancel')}</button><button class="btn pri" data-ok>${t('Convert')}</button>`});
+  const f = $('#rsCv', bg);
+  const sync = () => { $$('[data-m]', bg).forEach(b => b.classList.toggle('on', b.dataset.m === method)); $$('[data-for]', bg).forEach(el => el.hidden = el.dataset.for !== method); };
+  $$('[data-m]', bg).forEach(b => b.onclick = () => { method = b.dataset.m; sync(); });
+  sync();
+  $('[data-x2]', bg).onclick = bg.close;
+  $('[data-ok]', bg).onclick = async () => {
+    if (method === 'hold' && !await confirmBox(t('Archive this transaction as a card hold? It leaves balances and stats; you can undo it from the reserve.'))) return;
+    const body = {method, title: f.title.value, end_date: f.end_date.value || null, category_id: f.category_id.value || null, ref: f.ref.value, remind: f.remind.checked};
+    const r = await guard(() => api(`/api/transactions/${tid}/to-reserve`, {method: 'POST', body}));
+    bg.close(); toast(method === 'hold' ? t('Converted to a card hold — the transaction is archived') : t('Converted to a deposit — no longer counted as spending'));
+    await loadMeta(); if (after) after(r); openReserve(r.id, after);
+  };
+}
+/* Link to reserve from the transaction: pick the reserve, the role and (optionally) a partial amount */
+function rsTxLinkDialog(tx, items, after) {
+  const roles = r => r.method === 'hold' ? ['charge'] : tx.kind === 'transfer' ? ['deposit', 'refund'] : tx.kind === 'expense' ? ['charge', 'apply', 'forfeit'] : ['refund'];
+  const bg = modal(`🔗 ${t('Link to reserve')}`, `<form class="form" id="rsTl" autocomplete="off">
+    <div class="full rs-cv-tx"><b>${esc(tx.merchant_name || tx.note || '')}</b> · ${money(tx.amount, tx.currency)} · ${esc((tx.date || '').slice(0, 10))}${tx.status === 'review' ? ` <span class="pill">${t('To review')}</span>` : ''}</div>
+    <label class="f full"><span>${t('Reserve')}</span><select name="rid">${items.map(r => `<option value="${r.id}">${r.method === 'hold' ? '🔒' : '💰'} ${esc(r.label)} · ${money(rsOpenAmt(r), r.currency)} ${t('open')}${r.score >= 40 ? ' ★' : ''}</option>`).join('')}</select></label>
+    <label class="f"><span>${t('As')}</span><select name="role"></select></label>
+    <label class="f"><span>${t('Amount')} (${esc(tx.currency)}) <small class="muted">${t('(blank = all of it)')}</small></span><input name="amount" type="number" step="0.01" min="0.01" max="${tx.amount}" inputmode="decimal" placeholder="${tx.amount}"></label>
+    <label class="chk full" id="rsTlFin"><input type="checkbox" name="final"> ${t('This is the final bill')}</label>
+    ${tx.status === 'review' ? `<div class="full small muted">${t('The review item is approved when it is linked.')}</div>` : ''}
+    <div class="full small muted">${t('Linking never changes how the transaction counts in stats. A refund to your card is turned into a transfer from the Deposits account, so it is not counted as income.')}</div></form>`,
+    {buttons: `<button class="btn" data-x2>${t('Cancel')}</button><button class="btn pri" data-ok>🔗 ${t('Link')}</button>`});
+  const f = $('#rsTl', bg);
+  const sync = () => {
+    const r = items.find(x => x.id == f.rid.value) || {};
+    const keep = f.role.value;
+    f.role.innerHTML = roles(r).map(k => `<option value="${k}" ${(keep || r.role) === k ? 'selected' : ''}>${t(RS_ROLE[k][1])}</option>`).join('');
+    $('#rsTlFin', bg).hidden = r.method !== 'hold';
+  };
+  f.rid.onchange = () => { f.role.value = ''; sync(); };
+  sync();
+  $('[data-x2]', bg).onclick = bg.close;
+  $('[data-ok]', bg).onclick = async () => {
+    const body = {reserve_id: +f.rid.value, role: f.role.value, final: !$('#rsTlFin', bg).hidden && f.final.checked};
+    if (f.amount.value) body.amount = f.amount.value;
+    await guard(() => api(`/api/transactions/${tx.id}/link-reserve`, {method: 'POST', body}));
+    bg.close(); toast(t('Linked')); await loadMeta(); if (after) after();
+  };
 }
 /* list badge */
-const txReservePill = x => (x.reserves || []).map(r => `<span class="pill rs-m" title="${t('Linked to a reserve')}">🔒 ${esc((r.title || '').replace(/^\[DEMO\]\s*/, '') || t('Reserve'))}</span> `).join('');
+const txReservePill = x => (x.reserves || []).map(r => `<span class="pill rs-m" title="${t(r.role === 'converted' ? 'Converted to a card hold' : 'Linked to a reserve')}">🔒 ${esc((r.title || '').replace(/^\[DEMO\]\s*/, '') || t('Reserve'))}</span> `).join('');
+const txHintPill = x => x.reserve_hint && !(x.reserves || []).length ? `<span class="pill rs-hint-pill" title="${t('Looks like a deposit or card hold: open it to convert it to a reserve')}">💡 ${t(x.reserve_hint === 'hold' ? 'Card hold?' : 'Deposit?')}</span> ` : '';
 /* reminders page: open the reserve / check out */
 function rsReminderActions(r) {
   return `<button class="btn sm pri" data-rsco="${r.reserve_id}">🧳 ${t('Check out')}</button> <button class="btn sm" data-rsop="${r.reserve_id}">${t('Open reserve')}</button>`;
